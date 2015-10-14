@@ -2,6 +2,8 @@
 # John Vivian
 """
 Download files from S3 dir to where this script is run
+
+1st argument: S3 Dir (example: cgl-driver-projects-encrypted/wcdt/rna-seq-examples/)
 """
 import base64
 import hashlib
