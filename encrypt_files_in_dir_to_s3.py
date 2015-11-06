@@ -15,6 +15,7 @@ import hashlib
 import os
 import subprocess
 import sys
+import re
 
 
 class InputParameterError(Exception):
@@ -25,10 +26,14 @@ class InputParameterError(Exception):
 
 
 def generate_unique_key(master_key, url):
-    with open(master_key, 'r') as f:
-        master_key = f.read()
+    '''
+    This module will take a master key and a url, and then make a new key
+    specific to the url, based off the master.
+    '''
+    with open(master_key, 'r') as keyfile:
+        master_key = keyfile.read()
     assert len(master_key) == 32, 'Invalid Key! Must be 32 characters. ' \
-                                  'Key: {}, Length: {}'.format(master_key, len(master_key))
+        'Key: {}, Length: {}'.format(master_key, len(master_key))
     new_key = hashlib.sha256(master_key + url).digest()
     assert len(new_key) == 32, 'New key is invalid and is not 32 characters: {}'.format(new_key)
     return new_key
@@ -49,9 +54,10 @@ def write_to_s3(datum, master_key, bucket, remote_dir):
     if os.path.isfile(datum):
         files = [os.path.basename(datum)]
     elif os.path.isdir(datum):
-        files = [os.path.join(folder.lstrip(folder_base_dir), filename) for
-                 filename in files for folder, subfolders, files in 
-                 os.walk(datum)]
+        files = ['/'.join([re.sub(folder_base_dir, '', folder),
+                           filename]).lstrip('/') for folder, _,
+                 files in os.walk(datum) for filename in files]
+
     else:
         raise RuntimeError(datum + 'was neither regular file nor folder.')
     for file_path in files:
@@ -66,12 +72,12 @@ def write_to_s3(datum, master_key, bucket, remote_dir):
         command = ['s3am',
                    'upload',
                    '--sse-key-file', os.path.basename(url)+'.key',
-                    'file://' + os.path.join(folder_base_dir, file_path),
-                    bucket,
-                    file_path]
+                   'file://' + os.path.join(folder_base_dir, file_path),
+                   bucket,
+                   file_path]
         print(' '.join(command))
-        p = subprocess.Popen(command)
-        exit_codes.append(p)
+        proc = subprocess.Popen(command)
+        exit_codes.append(proc)
     exit_codes = [x.wait() for x in exit_codes]
 
 def main():
@@ -81,25 +87,25 @@ def main():
     into a specified bucket.
     '''
     parser = argparse.ArgumentParser(description=main.__doc__, add_help=True)
-    parser.add_argument('-M', '--master_key', dest='master_key', help = 'Path' +
+    parser.add_argument('-M', '--master_key', dest='master_key', help='Path' +
                         ' to the master key used for the encryption.', type=str,
                         required=True)
-    parser.add_argument('-B', '--bucket', dest='bucket',  help = 'S3 bucket.',
+    parser.add_argument('-B', '--bucket', dest='bucket', help='S3 bucket.',
                         type=str, required=True)
-    parser.add_argument('-R', '--remote_dir', dest='remote_dir', 
-                        help = 'Pseudo directory within the bucket to store ' +
-                        'the file(s).  NOTE: Folder structure below ' +
-                        'REMOTE_DIR will be retained.', type=str,
+    parser.add_argument('-R', '--remote_dir', dest='remote_dir',
+                        help='Pseudo directory within the bucket to store the' +
+                        ' file(s).  NOTE: Folder structure below REMOTE_DIR ' +
+                        'will be retained.', type=str,
                         required=False, default=None)
-    parser.add_argument('data', help = 'File(s) or ' +
-                        'folder(s) to transfer to S3.', type=str, nargs='+')
+    parser.add_argument('data', help='File(s) or folder(s) to transfer to S3.',
+                        type=str, nargs='+')
     params = parser.parse_args()
     #  Input handling
     if not os.path.exists(params.master_key):
-        raise InputParameterError('The master key was not found at ' + 
+        raise InputParameterError('The master key was not found at ' +
                                   params.master_key)
     #  If the user doesn't have ~/.boto , it doesn't even make sense to go ahead
-    if not os.path.exists('~/.boto'):
+    if not os.path.exists(os.path.expanduser('~/.boto')):
         raise RuntimeError('~/.boto not found')
 
     #  Process each of the input arguments.
