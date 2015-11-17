@@ -77,7 +77,10 @@ def write_to_s3(datum, master_key, bucket, remote_dir, temp_dir):
         raise RuntimeError(datum + 'was neither regular file nor folder.')
     #  Write each file to S3
     for file_path in files:
-        url = os.path.join(s3_url_base, bucket, file_path)
+        url = os.path.join(s3_url_base, bucket)
+        if remote_dir:
+            url = os.path.join(url, remote_dir)
+        url = os.path.join(url, file_path)
         new_key = generate_unique_key(master_key, url)
         #  base command call
         command = ['s3am', 'upload']
