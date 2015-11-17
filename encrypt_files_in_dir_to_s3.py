@@ -81,8 +81,10 @@ def write_to_s3(datum, master_key, bucket, remote_dir, temp_dir):
         new_key = generate_unique_key(master_key, url)
         #  base command call
         command = ['s3am', 'upload']
-        #  If key starts with -, make a temp file and pass that instead
-        if new_key.startswith('-'):
+        #  If key starts with -, make a temp file and pass that instead.
+        #  Key cannot contain ' or " either since taht will corrupt the list
+        #  passed to popen
+        if new_key.startswith('-') or '\'' in new_key or '\"' in new_key:
             with open(os.path.join(temp_dir, rand_key()), 'w') as keyfile:
                 keyfile.write(new_key)
             command.extend(['--sse-key-file', keyfile.name])
