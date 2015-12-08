@@ -1,14 +1,12 @@
 #!/usr/bin/env python2.7
 """
 Author: John Vivian
-Date: 12-7-15
+Date: 12-8-15
 
 Ideas taken from:
 Suman - http://stackoverflow.com/questions/11780262/calculate-running-cumulative-cost-of-ec2-spot-instance
 andPei - http://stackoverflow.com/questions/20854533/how-to-find-out-when-an-ec2-instance-was-last-stopped
-
 """
-# Details of instance & time range you want to find spot prices for
 import argparse
 import boto.ec2
 import time
