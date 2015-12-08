@@ -72,11 +72,12 @@ def write_to_s3(datum, master_key, bucket, remote_dir):
         if remote_dir:
             url = os.path.join(url, remote_dir)
         url = os.path.join(url, file_path)
-        new_key = generate_unique_key(master_key, url)
         #  base command call
         command = ['s3am', 'upload']
-        #  Add base64 encoded key
-        command.extend(['--sse-key-base64', base64.b64encode(new_key)])
+        if master_key:
+            new_key = generate_unique_key(master_key, url)
+            #  Add base64 encoded key
+            command.extend(['--sse-key-base64', base64.b64encode(new_key)])
         #  Add URL and bucket info to the call
         command.extend(['file://' + os.path.join(folder_base_dir, file_path),
                         bucket])
@@ -101,7 +102,7 @@ def main():
     parser = argparse.ArgumentParser(description=main.__doc__, add_help=True)
     parser.add_argument('-M', '--master_key', dest='master_key', help='Path' +
                         ' to the master key used for the encryption.', type=str,
-                        required=True)
+                        required=False, default=None)
     parser.add_argument('-B', '--bucket', dest='bucket', help='S3 bucket.',
                         type=str, required=True)
     parser.add_argument('-R', '--remote_dir', dest='remote_dir',
@@ -113,7 +114,7 @@ def main():
                         type=str, nargs='+')
     params = parser.parse_args()
     #  Input handling
-    if not os.path.exists(params.master_key):
+    if params.master_key and not os.path.exists(params.master_key):
         raise InputParameterError('The master key was not found at ' +
                                   params.master_key)
     #  If the user doesn't have ~/.boto , it doesn't even make sense to go ahead
