@@ -41,12 +41,8 @@ def get_start_and_stop(instance_id, region='us-west-2'):
 
 def calculate_cost(instance_type, start_time, end_time, avail_zone, region='us-west-2'):
     # Some values
-    max_cost = 0.0
+    max_cost, max_time, total_price, old_time = 0.0, 0.0, 0.0, 0.0
     min_time = float("inf")
-    max_time = 0.0
-    total_price = 0.0
-    old_time = 0.0
-
     # Connect to EC2 -- requires ~/.boto
     conn = boto.ec2.connect_to_region(region)
     # Get prices for instance, AZ and time range
@@ -67,10 +63,8 @@ def calculate_cost(instance_type, start_time, end_time, avail_zone, region='us-w
         if not (old_time == 0):
             total_price += (price.price * abs(timee - old_time)) / 3600
         old_time = timee
-
     # Difference b/w first and last returned times
     time_diff = max_time - min_time
-
     # Output aggregate, average and max results
     print "For one: {} in Zone: {}".format(instance_type, avail_zone)
     print "From: {} to {}".format(start_time, end_time)
@@ -83,11 +77,11 @@ def main():
     """
     Computes the spot market cost for an instance given 4 values:
 
-   instanceType, instanceID, availZone
-   Examples:
-   --instanceType = m1.xlarge
-   --instanceID = i-b3a1cd6a
-   --availZone = us-east-1c
+    instanceType, instanceID, availZone
+    Examples:
+    --instanceType = m1.xlarge
+    --instanceID = i-b3a1cd6a
+    --availZone = us-east-1c
     """
     parser = argparse.ArgumentParser(description=main.__doc__, add_help=True)
     parser.add_argument('-t', '--instance_type', required=True)
