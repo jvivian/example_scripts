@@ -34,11 +34,12 @@ def get_start_and_stop(id, region='us-west-2'):
                 stop = stop[0] + 'T' + stop[1] + '.000Z'
             else:
                 raise RuntimeError('Instance not stopped or terminated yet. No stop value')
-    assert start != 0
+    if start == 0:
+        raise RuntimeError('Spot Instance of that type not found')
     return start, stop
 
 
-def calculate_cost(instanceType, startTime, endTime):
+def calculate_cost(instanceType, startTime, endTime, aZ, region='us-west-2'):
     # Some values
     max_cost = 0.0
     min_time = float("inf")
@@ -47,19 +48,20 @@ def calculate_cost(instanceType, startTime, endTime):
     old_time = 0.0
 
     # Connect to EC2 -- requires ~/.boto
-    conn = boto.connect_ec2()
+    conn = boto.ec2.connect_to_region(region)
     # Get prices for instance, AZ and time range
-    print instanceType, startTime, endTime  #, aZ
+    print instanceType, startTime, endTime, aZ
     prices = conn.get_spot_price_history(instance_type=instanceType, start_time=startTime,
-                                         end_time=endTime)  #, availability_zone=aZ)
+                                         end_time=endTime, availability_zone=aZ)
 
     # Output the prices
+    # print prices
     print "Historic prices"
     for price in prices:
         timee = time.mktime(datetime.datetime.strptime(price.timestamp,
-                                                       "%Y-%m-%dT%H:%M:%S.000Z" ).timetuple())
-      # print "\t" + price.timestamp + " => " + str(price.price)
-      # Get max and min time from results
+                                                       "%Y-%m-%dT%H:%M:%S.000Z").timetuple())
+        # print "\t" + price.timestamp + " => " + str(price.price)
+        # Get max and min time from results
         if timee < min_time:
             min_time = timee
         if timee > max_time:
@@ -73,18 +75,18 @@ def calculate_cost(instanceType, startTime, endTime):
         old_time = timee
 
     # Difference b/w first and last returned times
-    timeDiff = max_time - min_time
+    time_diff = max_time - min_time
 
     # Output aggregate, average and max results
-    print "For: one %s" % (instanceType)
+    print "For: one %s" % instanceType
     print "From: %s to %s" % (startTime, endTime)
     print "\tTotal cost = $" + str(total_price)
     print "\tMax hourly cost = $" + str(max_cost)
-    print "\tAvg hourly cost = $" + str(total_price * 3600/ timeDiff)
+    print "\tAvg hourly cost = $" + str(total_price * 3600 / time_diff)
 
 
 def main():
-    '''
+    """
     Computes the spot market cost for an instance given 4 values:
 
    instanceType, instanceID, availZone
@@ -92,15 +94,15 @@ def main():
    --instanceType = m1.xlarge
    --instanceID = i-b3a1cd6a
    --availZone = us-east-1c
-    '''
+    """
     parser = argparse.ArgumentParser(description=main.__doc__, add_help=True)
     parser.add_argument('-t', '--instanceType', required=True)
     parser.add_argument('-i', '--instanceID', required=True)
-    #parser.add_argument('-a', '--availZone', required=True)
+    parser.add_argument('-a', '--availZone', required=True)
     params = parser.parse_args()
 
     startTime, endTime = get_start_and_stop(params.instanceID)
-    calculate_cost(params.instanceType, startTime, endTime)
+    calculate_cost(params.instanceType, startTime, endTime, params.availZone)
 
 
 if __name__ == '__main__':
