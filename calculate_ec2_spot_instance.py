@@ -1,7 +1,7 @@
 #!/usr/bin/env python2.7
 """
 Author: John Vivian
-Date: 12-8-15
+Date: 12-15-15
 
 Ideas taken from:
 Suman - http://stackoverflow.com/questions/11780262/calculate-running-cumulative-cost-of-ec2-spot-instance
@@ -33,7 +33,7 @@ def get_start_and_stop(instance_id, region='us-west-2'):
             else:
                 raise RuntimeError('Instance not stopped or terminated yet. No stop value')
     if start == 0:
-        raise RuntimeError('Spot Instance of that type not found')
+        raise RuntimeError('Spot Instance {} not found'.format(instance_id))
     return start, stop
 
 
@@ -73,18 +73,16 @@ def calculate_cost(instance_type, start_time, end_time, avail_zone, region='us-w
 
 def main():
     """
-    Computes the spot market cost for an instance given 4 values:
+    Computes the spot market cost for a stopped or terminated instance given 3 values:
+    instance_type, instance_id, avail_zone
 
-    instanceType, instanceID, availZone
-    Examples:
-    --instanceType = m1.xlarge
-    --instanceID = i-b3a1cd6a
-    --availZone = us-east-1c
+    Example:
+    python calculate_ec2_spot_instance.py -t c3.8xlarge -i i-b3a1cd6a -a us-west-2a
     """
-    parser = argparse.ArgumentParser(description=main.__doc__, add_help=True)
-    parser.add_argument('-t', '--instance_type', required=True)
-    parser.add_argument('-i', '--instance_id', required=True)
-    parser.add_argument('-a', '--avail_zone', required=True)
+    parser = argparse.ArgumentParser(description=main.__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('-t', '--instance_type', required=True, help='e.g. m4.large or c3.8xlarge.')
+    parser.add_argument('-i', '--instance_id', required=True, help='Instance ID is the second column in EC2 browser.')
+    parser.add_argument('-a', '--avail_zone', required=True, help='Availability Zone found in instance description.')
     params = parser.parse_args()
 
     start_time, end_time = get_start_and_stop(params.instance_id)
