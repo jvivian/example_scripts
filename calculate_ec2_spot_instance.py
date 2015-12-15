@@ -87,7 +87,7 @@ def main():
     parser.add_argument('-a', '--avail_zone', required=True)
     params = parser.parse_args()
 
-    start_time, end_time = get_start_and_stop(params.instanceID)
+    start_time, end_time = get_start_and_stop(params.instance_id)
     calculate_cost(params.instance_type, start_time, end_time, params.avail_zone)
 
 
