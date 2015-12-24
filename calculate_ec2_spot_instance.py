@@ -11,6 +11,9 @@ import argparse
 import boto.ec2
 import time
 import datetime
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 def get_start_and_stop(instance_id, region='us-west-2'):
@@ -19,6 +22,7 @@ def get_start_and_stop(instance_id, region='us-west-2'):
 
     :returns: strs      startTime, endTime
     """
+    logging.info('Acquiring start and stop time of instance...')
     start, stop = 0, 0
     conn = boto.ec2.connect_to_region(region)
     reservations = conn.get_all_instances(instance_id)
@@ -31,7 +35,9 @@ def get_start_and_stop(instance_id, region='us-west-2'):
                 stop = stop.split()
                 stop = stop[0] + 'T' + stop[1] + '.000Z'
             else:
-                raise RuntimeError('Instance not stopped or terminated yet. No stop value')
+                logging.info('Instance not stopped or terminated yet. Using current UTC time.')
+                t = datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')
+                stop = t[:4] + '-' + t[4:6] + '-' + t[6:8] + 'T' + t[8:10] + ':' + t[10:12] + ':' + t[12:14] + '.000Z'
     if start == 0:
         raise RuntimeError('Spot Instance {} not found'.format(instance_id))
     return start, stop
@@ -39,6 +45,7 @@ def get_start_and_stop(instance_id, region='us-west-2'):
 
 def calculate_cost(instance_type, start_time, end_time, avail_zone, region='us-west-2'):
     # Some values
+    logging.info('Calculating costs...')
     max_cost, max_time, total_price, old_time = 0.0, 0.0, 0.0, 0.0
     min_time = float("inf")
     # Connect to EC2 -- requires ~/.boto
@@ -80,9 +87,10 @@ def main():
     python calculate_ec2_spot_instance.py -t c3.8xlarge -i i-b3a1cd6a -a us-west-2a
     """
     parser = argparse.ArgumentParser(description=main.__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('-t', '--instance_type', required=True, help='e.g. m4.large or c3.8xlarge.')
+    parser.add_argument('-t', '--instance_type', default='c3.8xlarge', help='e.g. m4.large or c3.8xlarge.')
     parser.add_argument('-i', '--instance_id', required=True, help='Instance ID is the second column in EC2 browser.')
-    parser.add_argument('-a', '--avail_zone', required=True, help='Availability Zone found in instance description.')
+    parser.add_argument('-a', '--avail_zone', default='us-west-2a',
+                        help='Availability Zone found in instance description.')
     params = parser.parse_args()
 
     start_time, end_time = get_start_and_stop(params.instance_id)
