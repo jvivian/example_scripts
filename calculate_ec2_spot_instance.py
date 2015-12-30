@@ -4,7 +4,6 @@ Author: John Vivian
 Date: 12-15-15
 
 Ideas taken from:
-Suman - http://stackoverflow.com/questions/11780262/calculate-running-cumulative-cost-of-ec2-spot-instance
 andPei - http://stackoverflow.com/questions/20854533/how-to-find-out-when-an-ec2-instance-was-last-stopped
 """
 import argparse
@@ -46,7 +45,7 @@ def get_start_and_stop(instance_id, region='us-west-2'):
 def calculate_cost(instance_type, start_time, end_time, avail_zone, region='us-west-2'):
     # Some values
     logging.info('Calculating costs...')
-    max_cost, max_time, total_price, old_time = 0.0, 0.0, 0.0, 0.0
+    total, n = 0.0, 0
     min_time = float("inf")
     # Connect to EC2 -- requires ~/.boto
     conn = boto.ec2.connect_to_region(region)
@@ -55,27 +54,17 @@ def calculate_cost(instance_type, start_time, end_time, avail_zone, region='us-w
                                          end_time=end_time, availability_zone=avail_zone)
     # Output the prices
     for price in prices:
-        timee = time.mktime(datetime.datetime.strptime(price.timestamp, "%Y-%m-%dT%H:%M:%S.000Z").timetuple())
-        # Get max and min time from results
-        if timee < min_time:
-            min_time = timee
-        if timee > max_time:
-            max_time = timee
-        # Get the max cost
-        if price.price > max_cost:
-            max_cost = price.price
-        # Calculate total price
-        if not (old_time == 0):
-            total_price += (price.price * abs(timee - old_time)) / 3600
-        old_time = timee
+        total += price.price
+        n += 1
     # Difference b/w first and last returned times
-    time_diff = max_time - min_time
+    stop = time.mktime(datetime.datetime.strptime(end_time, "%Y-%m-%dT%H:%M:%S.000Z").timetuple())
+    start = time.mktime(datetime.datetime.strptime(start_time, "%Y-%m-%dT%H:%M:%S.000Z").timetuple())
+    time_diff = (stop - start) / 3600
     # Output aggregate, average and max results
     print "For one: {} in Zone: {}".format(instance_type, avail_zone)
     print "From: {} to {}".format(start_time, end_time)
-    print "\tTotal cost = $" + str(total_price)
-    print "\tMax hourly cost = $" + str(max_cost)
-    print "\tAvg hourly cost = $" + str(total_price * 3600 / time_diff)
+    print "\tTotal cost = $" + str(time_diff * (total/n))
+    print "\tAvg hourly cost = $" + str(total / n)
 
 
 def main():
