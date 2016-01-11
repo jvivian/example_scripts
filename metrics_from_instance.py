@@ -1,5 +1,8 @@
 #!/usr/bin/env python2.7
 """
+Author: John Vivivan
+Date: 1-8-16
+
 Collect metrics from an EC2 Instance
 
 Ideas taken from:
@@ -11,14 +14,18 @@ import logging
 from operator import itemgetter
 import boto.ec2
 from boto3.session import Session
+import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from boto_lib import get_instance_ids
 
 
 def get_start_and_stop(instance_id, region='us-west-2'):
     """
     calculates start and stop time of an instance
 
+    instance_id: str
+    region: str
     :returns: strs      startTime, endTime
     """
     logging.info('Acquiring start and stop time of instance...')
@@ -43,6 +50,14 @@ def get_start_and_stop(instance_id, region='us-west-2'):
 
 
 def get_metric(metric_name, instance_id, region='us-west-2'):
+    """
+    returns metric object associated with a paricular instance ID
+
+    metric_name: str
+    instance_id: str
+    region: str
+    :return: metric object
+    """
     session = Session(region_name=region)
     cw = session.client('cloudwatch')
     start, stop = get_start_and_stop(instance_id, region=region)
@@ -59,34 +74,62 @@ def get_datapoints(metric_statistic):
     return sorted(metric_statistic['Datapoints'], key=itemgetter('Timestamp'))
 
 
-def plot_metrics(instance_id, region='us-west-2'):
-    cpu_utilization = get_metric('CPUUtilization', instance_id, region)
-    disk_write_operations = get_metric('DiskWriteOps', instance_id, region)
-    disk_read_operations = get_metric('DiskReadOps', instance_id, region)
-    network_in = get_metric('NetworkIn', instance_id, region)
-    network_out = get_metric('NetworkOut', instance_id, region)
-    cpu = [x['Average'] for x in get_datapoints(cpu_utilization)]
-    disk_w = [x['Average'] for x in get_datapoints(disk_write_operations)]
-    disk_r = [x['Average'] for x in get_datapoints(disk_read_operations)]
-    disk = [max(x) for x in zip(disk_w, disk_r)]
-    net_in = [x['Average'] / 1024 / 1024 for x in get_datapoints(network_in)]
-    net_out = [x['Average'] / 1024 / 1024  for x in get_datapoints(network_out)]
-    net = [max(x) for x in zip(net_in, net_out)]
-    time = [x*5.0 / 60 for x in xrange(len(cpu))]
+def trim_lists(list_of_lists):
+    fixed = []
+    smallest = min(len(x) for x in list_of_lists)
+    for item in list_of_lists:
+        fixed.append(item[:smallest])
+    return fixed
+
+
+def plot_metrics(instance_ids, region='us-west-2'):
+    total_cpu, total_disk, total_network = [], [], []
+    for instance_id in instance_ids:
+        cpu_utilization = get_metric('CPUUtilization', instance_id, region)
+        disk_write_operations = get_metric('DiskWriteOps', instance_id, region)
+        disk_read_operations = get_metric('DiskReadOps', instance_id, region)
+        network_in = get_metric('NetworkIn', instance_id, region)
+        network_out = get_metric('NetworkOut', instance_id, region)
+        cpu = [x['Average'] for x in get_datapoints(cpu_utilization)]
+        disk_w = [x['Average'] for x in get_datapoints(disk_write_operations)]
+        disk_r = [x['Average'] for x in get_datapoints(disk_read_operations)]
+        disk = [max(x) for x in zip(disk_w, disk_r)]
+        net_in = [x['Average'] / 1024 / 1024 for x in get_datapoints(network_in)]
+        net_out = [x['Average'] / 1024 / 1024 for x in get_datapoints(network_out)]
+        net = [max(x) for x in zip(net_in, net_out)]
+        total_cpu.append(cpu)
+        total_disk.append(disk)
+        total_network.append(net)
+    # Time deviation in metric collection causes lists to be uneven in length
+    total_cpu = trim_lists(total_cpu)
+    total_disk = trim_lists(total_disk)
+    total_network = trim_lists(total_network)
+    time = [x*5.0 / 60 for x in xrange(len(total_cpu[0]))]
+    # Convert to array
+    total_cpu = np.array(total_cpu)
+    total_disk = np.array(total_disk)
+    total_network = np.array(total_network)
     # Plotting
-    f, axarr = plt.subplots(3, sharex=True)
-    axarr[0].plot(time, cpu, color='k')
-    axarr[0].set_title('CPU Utilization')
-    axarr[0].set_ylabel('Percent')
-    axarr[1].plot(time, disk, color='b')
-    axarr[1].set_title('Total Disk Operations')
-    axarr[1].set_ylabel('Operations')
-    axarr[2].plot(time, net, color='r')
-    axarr[2].set_title('Total Network')
-    axarr[2].set_ylabel('MegaBytes')
-    axarr[2].set_xlabel('Time (Hours)')
-    # axarr[0].set_xlim([0,25])
+    f, (ax1, ax2, ax3) = plt.subplots(3, sharex=True)
+    f.suptitle('Aggregate Resources for {} Instances'.format(len(total_cpu)), fontsize=14)
+    sns.tsplot(data=total_cpu, time=time, ax=ax1)
+    ax1.set_title('CPU Utilization')
+    ax1.set_ylabel('Percent')
+    sns.tsplot(data=total_disk, time=time, ax=ax2, color='r')
+    ax2.set_title('Total Disk Operations')
+    ax2.set_ylabel('Operations')
+    sns.tsplot(data=total_network, time=time, ax=ax3, color='g')
+    ax3.set_title('Total Network')
+    ax3.set_ylabel('MegaBytes')
+    ax3.set_xlabel('Time (hours)')
     plt.show()
 
 
-plot_metrics('i-89466c50')
+def main():
+    ids = get_instance_ids(filter_cluster='gtex-transfer', filter_name='jtvivian_toil-worker')
+    logging.info("IDs being collected: {}".format(ids))
+    plot_metrics(ids)
+
+
+if __name__ == '__main__':
+    main()
