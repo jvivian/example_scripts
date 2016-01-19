@@ -24,7 +24,7 @@ import logging
 import boto.ec2.cloudwatch
 import time
 from boto_lib import get_instance_ids
-from metrics_from_instance import plot_metrics
+from metrics_from_instance import plot_metrics, get_metric, get_datapoints
 logging.basicConfig(level=logging.INFO)
 logging.getLogger().setLevel(logging.INFO)
 
@@ -118,8 +118,8 @@ def launch_pipeline(params):
                            'screen',
                            '-dmS', params.cluster_name,
                           '/home/mesosbox/shared/launch.sh'])
-    logging.info('Waiting 5 minutes to set alarm to avoid early termination')
-    time.sleep(300)
+    logging.info('Waiting 15 minutes before blocking to avoid early termination')
+    time.sleep(900)
 
 
 def apply_alarm_to_instance(instance_id, region='us-west-2'):
@@ -127,31 +127,49 @@ def apply_alarm_to_instance(instance_id, region='us-west-2'):
     Applys an alarm to a given instance that terminates after a consecutive period of 1 hour at 0.5 CPU usage.
 
     instance_id: str        ID of the EC2 Instance
-    region: str             AWS region EC2 instances are in
+    region: str             AWS region
     """
     logging.info('Applying Cloudwatch alarm to: {}'.format(instance_id))
     cw = boto.ec2.cloudwatch.connect_to_region(region)
     alarm = boto.ec2.cloudwatch.MetricAlarm(name='CPUAlarm_{}'.format(instance_id),
                                             description='Terminate instance after low CPU.', namespace='AWS/EC2',
                                             metric='CPUUtilization', statistic='Average', comparison='<',
-                                            threshold=0.5, period=3600, evaluation_periods=1,
+                                            threshold=0.5, period=300, evaluation_periods=1,
                                             dimensions={'InstanceId': [instance_id]},
                                             alarm_actions=['arn:aws:automate:{}:ec2:terminate'.format(region)])
     cw.put_metric_alarm(alarm)
 
 
-def block_on_workers(params):
+def block_on_workers(params, ids, region='us-west-2'):
     """
-    Waits until all worker nodes have been killed, then returns. Checks every 5 minutes.
+    Blocks until all worker nodes are at low CPU before terminating to ensure complete metric collection.
+
+    params: argparse.Namespace      Input arguments
+    ids: list                       list of instance IDs
+    region: str                     AWS region
     """
-    t = 1
+    t = 3
+    metric = 'AWS/EC2/CPUUtilization'
     while True:
         logging.info('Blocking while pipeline runs... Time: {} Minutes'.format(t*5))
-        ids = get_instance_ids(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-worker')
-        if len(ids) == 0:
+        count = 0
+        for instance_id in ids:
+            # Looks at last 15m of each instance's CPU
+            met_object = get_metric(metric, instance_id, region)
+            averages = [float(x['Average']) for x in get_datapoints(met_object)]
+            sub = averages[-3:]
+            limit = max(sub)
+            if limit > 0.5:
+                break
+            else:
+                count += 1
+        # If all instances have a max CPU value of < 0.5 for 15 minutes, break loop
+        if count == len(ids):
+            logging.info('All worker nodes are idle.')
             break
-        t += 1
-        time.sleep(300)
+        else:
+            t += 1
+            time.sleep(300)
 
 
 def main():
@@ -175,11 +193,11 @@ def main():
     fix_launch(params)
     launch_cluster(params)
     launch_pipeline(params)
-    # Apply alarms to all instances
+    # Function will block until all workers are low CPU
     ids = get_instance_ids(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-worker')
+    block_on_workers(params, ids)
+    # Apply "Insta-kill" alarms to every instance
     map(apply_alarm_to_instance, ids)
-    # Function will block until all workers are terminated
-    block_on_workers(params)
     # Collect metrics from cluster
     list_of_metrics = [('AWS/EC2/CPUUtilization', 'Percent'),
                        ('CGCloud/MemUsage', 'Percent'),
