@@ -120,18 +120,17 @@ def plot_metrics(instance_ids, list_of_metrics, num_samples='NA', sample_size='N
     """
     metrics = {metric_info[0]: [] for metric_info in list_of_metrics}
     assert instance_ids, 'No instances retrieved. Check filters.'
-    # Parallelize metric collection for speed
-    # def f(instance_id):
     for instance_id in tqdm(instance_ids):
         for metric_info in list_of_metrics:
             metric = metric_info[0]
-            met_object = get_metric(metric, instance_id, region)
-            averages = [x['Average'] for x in get_datapoints(met_object)]
-            if averages:
-                metrics[metric].append(averages)
-    # with thread_pool(1):
-    #     map(f, instance_ids)
-    # Remove empty metrics
+            try:
+                met_object = get_metric(metric, instance_id, region)
+                averages = [x['Average'] for x in get_datapoints(met_object)]
+                if averages:
+                    metrics[metric].append(averages)
+            except RuntimeError:
+                if instance_id in instance_ids:
+                    instance_ids.remove(instance_id)
     metrics = dict((k, v) for k, v in metrics.iteritems() if v)
     list_of_metrics = [(x, y) for x, y in list_of_metrics if x in metrics]
     # Ensure all metrics are the same size
@@ -185,7 +184,7 @@ def main():
     # params = parser.parse_args()
     #
     # ids = get_instance_ids(filter_cluster=params.cluster_name, filter_name=params.instance_name)
-    ids = get_instance_ids(filter_cluster='gtex-transfer', filter_name='jtvivian_toil-worker')
+    ids = get_instance_ids(filter_cluster='scaling-10c-10s', filter_name='jtvivian_toil-worker')
     logging.info("IDs being collected: {}".format(ids))
     list_of_metrics = [('AWS/EC2/CPUUtilization', 'Percent'),
                        ('CGCloud/MemUsage', 'Percent'),
