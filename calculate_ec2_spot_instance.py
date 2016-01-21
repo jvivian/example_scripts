@@ -42,7 +42,8 @@ def get_start_and_stop(instance_id, region='us-west-2'):
     return start, stop
 
 
-def calculate_cost(instance_type, start_time, end_time, avail_zone, region='us-west-2'):
+def calculate_cost(instance_type, instance_id, avail_zone, region='us-west-2'):
+    start_time, end_time = get_start_and_stop(instance_id)
     # Some values
     logging.info('Calculating costs...')
     total, n = 0.0, 0
@@ -65,6 +66,7 @@ def calculate_cost(instance_type, start_time, end_time, avail_zone, region='us-w
     print "From: {} to {}".format(start_time, end_time)
     print "\tTotal cost = $" + str(time_diff * (total/n))
     print "\tAvg hourly cost = $" + str(total / n)
+    return str(time_diff * (total/n)), str(total / n)
 
 
 def main():
@@ -82,8 +84,8 @@ def main():
                         help='Availability Zone found in instance description.')
     params = parser.parse_args()
 
-    start_time, end_time = get_start_and_stop(params.instance_id)
-    calculate_cost(params.instance_type, start_time, end_time, params.avail_zone)
+
+    calculate_cost(params.instance_type, params.instance_id, params.avail_zone)
 
 
 if __name__ == '__main__':
