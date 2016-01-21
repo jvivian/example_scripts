@@ -30,7 +30,6 @@ def dl_encrypted_file_from_s3(url, file_path):
     url: str            S3 AWS string
     file_path: str      path where file will be downloaded
     """
-
     def generate_unique_key(master_key_path, url):
         """
         master_key_path: str    Path to the BD2K Master Key (for S3 Encryption)
@@ -40,14 +39,11 @@ def dl_encrypted_file_from_s3(url, file_path):
         """
         with open(master_key_path, 'r') as f:
             master_key = f.read()
-        assert len(master_key) == 32, 'Invalid Key! Must be 32 characters. ' \
-                                      'Key: {}, Length: {}'.format(master_key, len(master_key))
+        assert len(master_key) == 32, 'Invalid Key! Must be 32 characters. Key: {}, Length: {}'.format(master_key, len(master_key))
         new_key = hashlib.sha256(master_key + url).digest()
         assert len(new_key) == 32, 'New key is invalid and is not 32 characters: {}'.format(new_key)
         return new_key
-
     key = generate_unique_key('master.key', url)
-
     encoded_key = base64.b64encode(key)
     encoded_key_md5 = base64.b64encode(hashlib.md5(key).digest())
     h1 = 'x-amz-server-side-encryption-customer-algorithm:AES256'
@@ -56,7 +52,7 @@ def dl_encrypted_file_from_s3(url, file_path):
     subprocess.check_call(['curl', '-fs', '--retry', '5', '-H', h1, '-H', h2, '-H', h3, url, '-o', file_path])
 
 
-def print_running_instances(filter_name=None, filter_cluster=None):
+def get_instance_ips(filter_name=None, filter_cluster=None):
     import boto.ec2
     ips = []
     filters = {}
@@ -72,6 +68,7 @@ def print_running_instances(filter_name=None, filter_cluster=None):
                 ips.append(i.ip_address)
                 print str(i.ip_address)
     return ips
+
 
 def list_s3_urls(bucket_name, directory=''):
     conn = boto.connect_s3()
@@ -152,6 +149,7 @@ def count_items_in_bucket(bucket_name, directory=''):
         n += 1
     return n
 
+
 def get_instance_ids(filter_name=None, filter_cluster=None):
     import boto.ec2
     ids = []
@@ -166,4 +164,21 @@ def get_instance_ids(filter_name=None, filter_cluster=None):
         for i in r.instances:
             if i.ip_address is not None:
                 ids.append(str(i.id))
+    return ids
+
+
+def get_avail_zone(filter_name=None, filter_cluster=None):
+    import boto.ec2
+    ids = []
+    filters = {}
+    if filter_name:
+        filters['tag:Name'] = filter_name
+    if filter_cluster:
+        filters['tag:cluster_name'] = filter_cluster
+    conn = boto.ec2.connect_to_region("us-west-2")
+    reservations = conn.get_all_reservations(filters=filters)
+    for r in reservations:
+        for i in r.instances:
+            if i.placement is not None:
+                ids.append(str(i.placement))
     return ids
