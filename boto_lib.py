@@ -18,6 +18,7 @@ import os
 import subprocess
 import boto
 import boto.ec2
+import boto.ec2.cloudwatch
 import time
 import datetime
 
@@ -182,3 +183,22 @@ def get_avail_zone(filter_name=None, filter_cluster=None):
             if i.placement is not None:
                 ids.append(str(i.placement))
     return ids
+
+
+def apply_alarm_to_instance(instance_id, namespace='AWS/EC2', metric='CPUUtilization', statistic='Average',
+                            comparison='<', threshold=0.5, period=300, evaluation_periods=1, region='us-west-2'):
+    """
+    Applys an alarm to a given instance that terminates after a consecutive period of 1 hour at 0.5 CPU usage.
+
+    instance_id: str        ID of the EC2 Instance
+    region: str             AWS region
+    """
+    logging.info('Applying Cloudwatch alarm to: {}'.format(instance_id))
+    cw = boto.ec2.cloudwatch.connect_to_region(region)
+    alarm = boto.ec2.cloudwatch.MetricAlarm(name='CPUAlarm_{}'.format(instance_id),
+                                            description='Terminate instance after low CPU.', namespace=namespace,
+                                            metric=metric, statistic=statistic, comparison=comparison,
+                                            threshold=threshold, period=period, evaluation_periods=evaluation_periods,
+                                            dimensions={'InstanceId': [instance_id]},
+                                            alarm_actions=['arn:aws:automate:{}:ec2:terminate'.format(region)])
+    cw.put_metric_alarm(alarm)
