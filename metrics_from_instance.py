@@ -111,7 +111,7 @@ def trim_lists(list_of_lists):
     return fixed
 
 
-def plot_metrics(instance_ids, list_of_metrics, num_samples='NA', sample_size='NA', region='us-west-2'):
+def plot_metrics(instance_ids, list_of_metrics, num_samples='NA', sample_size='NA', region='us-west-2', uuid=uuid4()):
     """
     Plots metrics
 
@@ -161,7 +161,6 @@ def plot_metrics(instance_ids, list_of_metrics, num_samples='NA', sample_size='N
     # Fix spacing by modifying defaultSize and doubling as opposed to setting arbitrary figsize
     default_size = f.get_size_inches()
     f.set_size_inches(default_size[0]*2.5, default_size[1]*2.5)
-    uuid = uuid4()
     mkdir_p('{}_{}'.format(uuid, str(datetime.utcnow()).split()[0]))
     plt.savefig('{}_{}/Metrics_for_{}_nodes.svg'.format(uuid, str(datetime.utcnow()).split()[0], num_instances),
                 format='svg', dpi=600)
