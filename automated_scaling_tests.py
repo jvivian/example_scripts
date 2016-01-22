@@ -70,7 +70,7 @@ def fix_launch(params):
         with open(os.path.join(params.shared_dir, 'fixed.sh'), 'w') as f_out:
             for line in f_in:
                 if line.startswith('aws'):
-                    f_out.write('aws:us-west-2:auto-{}_{} \\\n'.format(uuid, str(datetime.utcnow()).split()[0]))
+                    f_out.write('aws:us-west-2:{}-{} \\\n'.format(uuid, str(datetime.utcnow()).split()[0]))
                 elif line.startswith('--s3_dir'):
                     f_out.write('--s3_dir tcga-output/{}_{} \\\n'.format(uuid, str(datetime.utcnow()).split()[0]))
                 else:
