@@ -14,14 +14,15 @@ import argparse
 import os
 import random
 import subprocess
-from uuid import uuid4
 import boto
 import logging
 import boto.ec2.cloudwatch
 import time
+from uuid import uuid4
 from boto_lib import get_instance_ids, get_instance_ips, get_avail_zone
 from metrics_from_instance import plot_metrics, get_metric, get_datapoints
 from calculate_ec2_spot_instance import calculate_cost
+from datetime import datetime
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger().setLevel(logging.INFO)
@@ -69,9 +70,9 @@ def fix_launch(params):
         with open(os.path.join(params.shared_dir, 'fixed.sh'), 'w') as f_out:
             for line in f_in:
                 if line.startswith('aws'):
-                    f_out.write('aws:us-west-2:auto-{} \\\n'.format(uuid))
+                    f_out.write('aws:us-west-2:auto-{}_{} \\\n'.format(uuid, str(datetime.utcnow()).split()[0]))
                 elif line.startswith('--s3_dir'):
-                    f_out.write('--s3_dir tcga-output/{} \\\n'.format(uuid))
+                    f_out.write('--s3_dir tcga-output/{}_{} \\\n'.format(uuid, str(datetime.utcnow()).split()[0]))
                 else:
                     f_out.write(line)
     os.remove(os.path.join(params.shared_dir, 'launch.sh'))
@@ -166,14 +167,17 @@ def block_on_workers(ids, region='us-west-2'):
         count = 0
         for instance_id in ids:
             # Looks at last 15m of each instance's CPU
-            met_object = get_metric(metric, instance_id, region)
-            averages = [float(x['Average']) for x in get_datapoints(met_object)]
-            sub = averages[-3:]
-            limit = max(sub)
-            if limit > 0.5:
-                break
-            else:
-                count += 1
+            try:
+                met_object = get_metric(metric, instance_id, region)
+                averages = [float(x['Average']) for x in get_datapoints(met_object)]
+                sub = averages[-3:]
+                limit = max(sub)
+                if limit > 0.5:
+                    break
+                else:
+                    count += 1
+            except RuntimeError:
+                ids.remove(instance_id)
         # If all instances have a max CPU value of < 0.5 for 15 minutes, break loop
         if count == len(ids):
             logging.info('All worker nodes are idle.')
