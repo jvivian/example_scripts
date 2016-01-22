@@ -129,8 +129,8 @@ def add_boto_to_nodes(params):
         subprocess.check_call(['scp', '-o', 'stricthostkeychecking=no',
                                boto_path,
                                'mesosbox@{}:/home/mesosbox/.boto'.format(ip)])
-    logging.info('Waiting 10 minutes before blocking to avoid early termination')
-    time.sleep(600)
+    logging.info('Waiting 15 minutes before blocking to avoid early termination')
+    time.sleep(900)
 
 
 def apply_alarm_to_instance(instance_id, region='us-west-2'):
