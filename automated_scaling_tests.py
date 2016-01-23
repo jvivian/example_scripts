@@ -231,7 +231,7 @@ def main():
     # Report Cost
     avail_zone = get_avail_zone(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-worker')[0]
     total_cost, avg_hourly_cost = calculate_cost(params.instance_type, ids[0], avail_zone)
-    with open(os.path.join(str(uuid), 'run_report.txt'), 'w') as f:
+    with open(os.path.join(str(uuid) + '_{}'.format(str(datetime.utcnow()).split()[0]), 'run_report.txt'), 'w') as f:
         f.write('\nInstance Type: {}\nAvail Zone: {}\nTotal Cost: {}\nAverage Hourly Cost: {}'
                 '\nUUID of Run: {}\nNum Samples: {}\n Num Nodes: {}\n'.format(
                 params.instance_type, avail_zone, total_cost, avg_hourly_cost, uuid, num_samples, params.cluster_size))
