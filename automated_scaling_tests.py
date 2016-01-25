@@ -127,9 +127,12 @@ def add_boto_to_nodes(params):
     logging.info('transferring boto to every node')
     boto_path = os.path.join(params.shared_dir, 'boto')
     for ip in ips:
-        subprocess.check_call(['scp', '-o', 'stricthostkeychecking=no',
-                               boto_path,
-                               'mesosbox@{}:/home/mesosbox/.boto'.format(ip)])
+        try:
+            subprocess.check_call(['scp', '-o', 'stricthostkeychecking=no',
+                                   boto_path,
+                                   'mesosbox@{}:/home/mesosbox/.boto'.format(ip)])
+        except:
+            logging.info("Couldn't add Boto to: {}. Skipping".format(ip))
     logging.info('Waiting 15 minutes before blocking to avoid early termination')
     time.sleep(900)
 
@@ -149,7 +152,11 @@ def apply_alarm_to_instance(instance_id, region='us-west-2'):
                                             threshold=0.5, period=300, evaluation_periods=1,
                                             dimensions={'InstanceId': [instance_id]},
                                             alarm_actions=['arn:aws:automate:{}:ec2:terminate'.format(region)])
-    cw.put_metric_alarm(alarm)
+    try:
+        cw.put_metric_alarm(alarm)
+    except:
+        logging.info("ERROR: Couldn't Apply Alarm to: {}. Skipping.".format(instance_id))
+        pass
 
 
 def block_on_workers(ids, region='us-west-2'):
