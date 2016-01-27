@@ -15,18 +15,13 @@ from operator import itemgetter
 import os
 import boto.ec2
 from boto3.session import Session
-import itertools
 import errno
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import sys
 from tqdm import tqdm
 from uuid import uuid4
 from boto_lib import get_instance_ids
 
 logging.basicConfig(level=logging.INFO)
-logging.getLogger().setLevel(100)
+# logging.getLogger().setLevel(100)
 
 
 def mkdir_p(path):
@@ -71,25 +66,27 @@ def get_start_and_stop(instance_id, region='us-west-2'):
     return start, stop
 
 
-def get_metric(metric, instance_id, region='us-west-2'):
+def get_metric(metric, instance_id, start, stop, region='us-west-2'):
     """
     returns metric object associated with a paricular instance ID
 
     metric_name: str            Name of Metric to be Collected
     instance_id: str            Instance ID
-    region: str                 Region
+    start: float                ISO format of UTC time start point
+    stop: float                 ISO format of UTC time stop point
+    region: str                 AWS region
     :return: metric object
     """
     session = Session(region_name=region)
     cw = session.client('cloudwatch')
     namespace, metric_name = metric.rsplit('/', 1)
-    start, stop = get_start_and_stop(instance_id, region=region)
+    logging.info('Start: {}\tStop: {}'.format(start, stop))
     return cw.get_metric_statistics(Namespace=namespace,
                                     MetricName=metric_name,
                                     Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
                                     StartTime=start,
                                     EndTime=stop,
-                                    Period=600,
+                                    Period=300,
                                     Statistics=['Average'])
 
 
@@ -100,71 +97,43 @@ def get_datapoints(metric_statistic):
     return sorted(metric_statistic['Datapoints'], key=itemgetter('Timestamp'))
 
 
-def trim_lists(list_of_lists):
+def collect_metrics(instance_ids, list_of_metrics, start, stop, region='us-west-2', uuid=str(uuid4())):
     """
-    Given a list of lists, returns a list of lists of equal length.
-    """
-    fixed = []
-    smallest = min(len(x) for x in list_of_lists)
-    for item in list_of_lists:
-        fixed.append(item[:smallest])
-    return fixed
+    Collect metrics from AWS instances.  AWS limits data collection to 1,440 points or 5 days if
+    collected in intervals of 5 minutes.  This metric collection will "page" the results in intervals
+    of 4 days (to be safe) in order to collect all the desired metrics.
 
-
-def plot_metrics(instance_ids, list_of_metrics, num_samples='NA', sample_size='NA', region='us-west-2', uuid=uuid4()):
+    instance_ids: list          List of instance IDs
+    list_of_metrics: list       List of metric names
+    start: float                time.time() of start point
+    stop: float                 time.time() of stop point
+    region: str                 AWS region metrics are being collected from
+    uuid: str                   UUID of metric collection
     """
-    Plots metrics
-
-    instance_ids: list      List of instance IDs
-    list_of_metrics: list   List of tuples:  (metric_name, ylabel)
-    """
-    metrics = {metric_info[0]: [] for metric_info in list_of_metrics}
+    metrics = {metric: [] for metric in list_of_metrics}
     assert instance_ids, 'No instances retrieved. Check filters.'
     for instance_id in tqdm(instance_ids):
-        for metric_info in list_of_metrics:
-            metric = metric_info[0]
+        for metric in list_of_metrics:
+            averages = []
             try:
-                met_object = get_metric(metric, instance_id, region)
-                averages = [x['Average'] for x in get_datapoints(met_object)]
+                s = start
+                while s < stop:
+                    e = s + (4 * 24 * 3600)
+                    aws_start = datetime.isoformat(datetime.utcfromtimestamp(s)) + 'Z'
+                    aws_stop = datetime.isoformat(datetime.utcfromtimestamp(e)) + 'Z'
+                    met_object = get_metric(metric, instance_id, aws_start, aws_stop, region)
+                    averages.extend([x['Average'] for x in get_datapoints(met_object)])
+                    s = e
                 if averages:
                     metrics[metric].append(averages)
+                    logging.info('# of Datapoints for metric {} is {}'.format(metric, len(metrics[metric][0])))
             except RuntimeError:
                 if instance_id in instance_ids:
                     instance_ids.remove(instance_id)
+    # Remove metrics if no datapoints were collected
     metrics = dict((k, v) for k, v in metrics.iteritems() if v)
-    list_of_metrics = [(x, y) for x, y in list_of_metrics if x in metrics]
-    # Ensure all metrics are the same size
-    limit = sys.maxint
-    num_instances = 0
-    for metric in metrics:
-        metrics[metric] = trim_lists(metrics[metric])
-        if limit > len(metrics[metric][0]):
-            limit = len(metrics[metric][0])
-    assert limit > 1, 'Time Series plot cannot be made with only one time point. Wait a few minutes and try again.'
-    for metric in metrics:
-        metrics[metric] = [x[:limit] for x in metrics[metric]]
-        num_instances = len(metrics[metric])
-        metrics[metric] = np.array(metrics[metric])
-    # Plot
-    colors = itertools.cycle(["r", "b", "g", 'y', 'k'])
-    time = [x*5.0 / 60 for x in xrange(limit)]
-    f, axes = plt.subplots(len(metrics), sharex=True)
-    for i, metric_info in enumerate(list_of_metrics):
-        metric, ylabel = metric_info
-        sns.tsplot(data=metrics[metric], time=time, ax=axes[i], color=next(colors))
-        axes[i].set_title(metric.rsplit('/', 1)[1])
-        axes[i].set_ylabel(ylabel)
-    axes[-1].set_xlabel('Time (hours)')
-    f.suptitle('Aggregate Resources for {} Instances\n{} Samples ~ {} TB'.format(
-        num_instances, num_samples, sample_size), fontsize=14)
-    # plt.show()
-    # Fix spacing by modifying defaultSize and doubling as opposed to setting arbitrary figsize
-    default_size = f.get_size_inches()
-    f.set_size_inches(default_size[0]*2.5, default_size[1]*2.5)
-    mkdir_p('{}_{}'.format(uuid, str(datetime.utcnow()).split()[0]))
-    plt.savefig('{}_{}/Metrics_for_{}_nodes.svg'.format(uuid, str(datetime.utcnow()).split()[0], num_instances),
-                format='svg', dpi=600)
     # Save CSV of data
+    mkdir_p('{}_{}'.format(uuid, str(datetime.utcnow()).split()[0]))
     for metric in metrics:
         with open('{}_{}/{}.csv'.format(uuid, str(datetime.utcnow()).split()[0], metric.rsplit('/', 1)[1]), 'wb') as f:
             writer = csv.writer(f)
@@ -173,9 +142,7 @@ def plot_metrics(instance_ids, list_of_metrics, num_samples='NA', sample_size='N
 
 def main():
     """
-    Script to collect aggregate metrics from a variety of instances.
-
-
+    Script to collect aggregate metrics from a collection of instances.
     """
     # parser = argparse.ArgumentParser(description=main.__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     # parser.add_argument('-c', '--cluster_name', default=None, help='Name of cluster to filter by.')
@@ -183,17 +150,17 @@ def main():
     # params = parser.parse_args()
     #
     # ids = get_instance_ids(filter_cluster=params.cluster_name, filter_name=params.instance_name)
-    ids = get_instance_ids(filter_cluster='scaling-10c-10s', filter_name='jtvivian_toil-worker')
+    ids = get_instance_ids(filter_cluster='gtex-transfer', filter_name='jtvivian_toil-worker')
     logging.info("IDs being collected: {}".format(ids))
-    list_of_metrics = [('AWS/EC2/CPUUtilization', 'Percent'),
-                       ('CGCloud/MemUsage', 'Percent'),
-                       ('CGCloud/DiskUsage_mnt_ephemeral', 'Percent'),
-                       ('CGCloud/DiskUsage_root', 'Percent'),
-                       ('AWS/EC2/NetworkIn', 'Bytes'),
-                       ('AWS/EC2/NetworkOut', 'Bytes'),
-                       ('AWS/EC2/DiskWriteOps', 'Bytes'),
-                       ('AWS/EC2/DiskReadOps', 'Bytes')]
-    plot_metrics(ids, list_of_metrics)
+    list_of_metrics = ['AWS/EC2/CPUUtilization',
+                       'CGCloud/MemUsage',
+                       'CGCloud/DiskUsage_mnt_ephemeral',
+                       'CGCloud/DiskUsage_root',
+                       'AWS/EC2/NetworkIn',
+                       'AWS/EC2/NetworkOut',
+                       'AWS/EC2/DiskWriteOps',
+                       'AWS/EC2/DiskReadOps']
+    collect_metrics(ids, list_of_metrics, start=1452822550.44147, stop=1453859352)
 
 
 if __name__ == '__main__':
