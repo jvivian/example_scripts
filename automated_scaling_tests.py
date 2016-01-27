@@ -20,7 +20,7 @@ import boto.ec2.cloudwatch
 import time
 from uuid import uuid4
 from boto_lib import get_instance_ids, get_instance_ips, get_avail_zone
-from metrics_from_instance import plot_metrics, get_metric, get_datapoints
+from metrics_from_instance import collect_metrics, get_metric, get_datapoints
 from calculate_ec2_spot_instance import calculate_cost
 from datetime import datetime
 
@@ -131,13 +131,13 @@ def add_boto_to_nodes(params):
             subprocess.check_call(['scp', '-o', 'stricthostkeychecking=no',
                                    boto_path,
                                    'mesosbox@{}:/home/mesosbox/.boto'.format(ip)])
-        except:
+        except subprocess.CalledProcessError:
             logging.info("Couldn't add Boto to: {}. Skipping".format(ip))
     logging.info('Waiting 15 minutes before blocking to avoid early termination')
     time.sleep(900)
 
 
-def apply_alarm_to_instance(instance_id, region='us-west-2'):
+def apply_alarm_to_instance(instance_id, threshold=0.5, region='us-west-2'):
     """
     Applys an alarm to a given instance that terminates after a consecutive period of 1 hour at 0.5 CPU usage.
 
@@ -149,7 +149,7 @@ def apply_alarm_to_instance(instance_id, region='us-west-2'):
     alarm = boto.ec2.cloudwatch.MetricAlarm(name='CPUAlarm_{}'.format(instance_id),
                                             description='Terminate instance after low CPU.', namespace='AWS/EC2',
                                             metric='CPUUtilization', statistic='Average', comparison='<',
-                                            threshold=0.5, period=300, evaluation_periods=1,
+                                            threshold=threshold, period=300, evaluation_periods=1,
                                             dimensions={'InstanceId': [instance_id]},
                                             alarm_actions=['arn:aws:automate:{}:ec2:terminate'.format(region)])
     try:
@@ -172,10 +172,12 @@ def block_on_workers(ids, region='us-west-2'):
     while True:
         logging.info('Blocking while pipeline runs... Time: {} Minutes'.format(t * 5))
         count = 0
+        aws_start = datetime.isoformat(datetime.utcfromtimestamp(time.time() - 1800)) + 'Z'
+        aws_stop = datetime.isoformat(datetime.utcfromtimestamp(time.time())) + 'Z'
         for instance_id in ids:
-            # Looks at last 15m of each instance's CPU
+            # Look at last 15m of each instance's CPU usage
             try:
-                met_object = get_metric(metric, instance_id, region)
+                met_object = get_metric(metric, instance_id, aws_start, aws_stop, region)
                 averages = [float(x['Average']) for x in get_datapoints(met_object)]
                 sub = averages[-3:]
                 limit = max(sub)
@@ -211,37 +213,40 @@ def main():
     params = parser.parse_args()
 
     # Run sequence
+    start = time.time()
     num_samples = create_config(params)
     uuid = fix_launch(params)
     launch_cluster(params)
     launch_pipeline(params)
-    # Function will block until all workers are low CPU
-    ids = get_instance_ids(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-worker')
     add_boto_to_nodes(params)
-    block_on_workers(ids)
+    # Block until all workers are idle
+    ids = get_instance_ids(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-worker')
+    block_on_workers(ids, start)
+    stop = time.time()
     # Apply "Insta-kill" alarm to every worker
     map(apply_alarm_to_instance, ids)
     # Collect metrics from cluster
-    list_of_metrics = [('AWS/EC2/CPUUtilization', 'Percent'),
-                       ('CGCloud/MemUsage', 'Percent'),
-                       ('CGCloud/DiskUsage_mnt_ephemeral', 'Percent'),
-                       ('CGCloud/DiskUsage_root', 'Percent'),
-                       ('AWS/EC2/NetworkIn', 'Bytes'),
-                       ('AWS/EC2/NetworkOut', 'Bytes'),
-                       ('AWS/EC2/DiskWriteOps', 'Bytes'),
-                       ('AWS/EC2/DiskReadOps', 'Bytes')]
-    plot_metrics(ids, list_of_metrics, num_samples, params.sample_size, uuid=uuid)
+    list_of_metrics = ['AWS/EC2/CPUUtilization',
+                       'CGCloud/MemUsage',
+                       'CGCloud/DiskUsage_mnt_ephemeral',
+                       'CGCloud/DiskUsage_root',
+                       'AWS/EC2/NetworkIn',
+                       'AWS/EC2/NetworkOut',
+                       'AWS/EC2/DiskWriteOps',
+                       'AWS/EC2/DiskReadOps']
+    collect_metrics(ids, list_of_metrics, start, stop, uuid=uuid)
     # Kill leader
     logging.info('Killing Leader')
     leader_id = get_instance_ids(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-leader')[0]
-    apply_alarm_to_instance(leader_id)
+    apply_alarm_to_instance(leader_id, threshold=5)
     # Report Cost
     avail_zone = get_avail_zone(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-worker')[0]
     total_cost, avg_hourly_cost = calculate_cost(params.instance_type, ids[0], avail_zone)
     with open(os.path.join(str(uuid) + '_{}'.format(str(datetime.utcnow()).split()[0]), 'run_report.txt'), 'w') as f:
         f.write('\nInstance Type: {}\nAvail Zone: {}\nTotal Cost: {}\nAverage Hourly Cost: {}'
-                '\nUUID of Run: {}\nNum Samples: {}\n Num Nodes: {}\n'.format(
-                params.instance_type, avail_zone, total_cost, avg_hourly_cost, uuid, num_samples, params.cluster_size))
+                '\nUUID of Run: {}\nNum Samples: {}\nNum Nodes: {}\n'.format(
+                params.instance_type, avail_zone, total_cost*params.cluster_size, avg_hourly_cost,
+                uuid, num_samples, params.cluster_size))
     # You're done!
     logging.info('\n\nScaling Test Complete.'
                  '\nUUID of Run: {}\nNum Samples: {}\nNum Nodes: {}\n\n'.format(uuid, num_samples, params.cluster_size))
