@@ -170,14 +170,14 @@ def block_on_workers(ids, region='us-west-2'):
     t = 3
     metric = 'AWS/EC2/CPUUtilization'
     while True:
-        logging.info('Blocking while pipeline runs... Time: {} Minutes'.format(t * 5))
         count = 0
         aws_start = datetime.isoformat(datetime.utcfromtimestamp(time.time() - 1800)) + 'Z'
         aws_stop = datetime.isoformat(datetime.utcfromtimestamp(time.time())) + 'Z'
         for instance_id in ids:
             # Look at last 15m of each instance's CPU usage
             try:
-                met_object = get_metric(metric, instance_id, aws_start, aws_stop, region)
+                logging.info('Checking instance: {}'.format(instance_id))
+                met_object = get_metric(metric, instance_id, aws_start, aws_stop)
                 averages = [float(x['Average']) for x in get_datapoints(met_object)]
                 sub = averages[-3:]
                 limit = max(sub)
@@ -185,6 +185,8 @@ def block_on_workers(ids, region='us-west-2'):
                     break
                 else:
                     count += 1
+            except TypeError as e:
+                logging.error('Boto auth failure. Manual intervention is likely. \n{}'.format(e))
             except RuntimeError:
                 ids.remove(instance_id)
         # If all instances have a max CPU value of < 0.5 for 15 minutes, break loop
@@ -192,6 +194,7 @@ def block_on_workers(ids, region='us-west-2'):
             logging.info('All worker nodes are idle.')
             break
         else:
+            logging.info('Blocking while pipeline runs... Time: {} Minutes'.format(t * 5))
             t += 1
             time.sleep(300)
 
@@ -223,8 +226,6 @@ def main():
     ids = get_instance_ids(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-worker')
     block_on_workers(ids, start)
     stop = time.time()
-    # Apply "Insta-kill" alarm to every worker
-    map(apply_alarm_to_instance, ids)
     # Collect metrics from cluster
     list_of_metrics = ['AWS/EC2/CPUUtilization',
                        'CGCloud/MemUsage',
@@ -235,11 +236,13 @@ def main():
                        'AWS/EC2/DiskWriteOps',
                        'AWS/EC2/DiskReadOps']
     collect_metrics(ids, list_of_metrics, start, stop, uuid=uuid)
+    # Apply "Insta-kill" alarm to every worker
+    map(apply_alarm_to_instance, ids)
     # Kill leader
     logging.info('Killing Leader')
     leader_id = get_instance_ids(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-leader')[0]
     apply_alarm_to_instance(leader_id, threshold=5)
-    # Report Cost
+    # Generate Run Report
     avail_zone = get_avail_zone(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-worker')[0]
     total_cost, avg_hourly_cost = calculate_cost(params.instance_type, ids[0], avail_zone)
     with open(os.path.join(str(uuid) + '_{}'.format(str(datetime.utcnow()).split()[0]), 'run_report.txt'), 'w') as f:
