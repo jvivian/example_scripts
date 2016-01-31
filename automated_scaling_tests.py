@@ -15,12 +15,13 @@ import os
 import random
 import subprocess
 import boto
+import boto.exception
 import logging
 import boto.ec2.cloudwatch
 import time
 from uuid import uuid4
 from boto_lib import get_instance_ids, get_instance_ips, get_avail_zone
-from metrics_from_instance import collect_metrics, get_metric, get_datapoints
+from metrics_from_instance import collect_metrics
 from calculate_ec2_spot_instance import calculate_cost
 from datetime import datetime
 
@@ -111,10 +112,10 @@ def launch_pipeline(params):
     params: argparse.Namespace      Input arguments
     """
     leader_ip = get_instance_ips(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-leader')[0]
-    logging.info('Launching Pipeline')
-    subprocess.check_call(['ssh', '-o', 'StrictHostKeyChecking=no',
-                           'mesosbox@{}'.format(leader_ip),
-                           'screen', '-dmS', params.cluster_name, '/home/mesosbox/shared/launch.sh'])
+    logging.info('Launching Pipeline and blocking. Check log.txt on leader for stderr and stdout')
+    subprocess.check_call('ssh -o StrictHostKeyChecking=no mesosbox@{} '
+                          '/home/mesosbox/shared/launch.sh "&>" log.txt'.format(leader_ip),
+                          shell=True)
 
 
 def add_boto_to_nodes(params):
@@ -133,11 +134,9 @@ def add_boto_to_nodes(params):
                                    'mesosbox@{}:/home/mesosbox/.boto'.format(ip)])
         except subprocess.CalledProcessError:
             logging.info("Couldn't add Boto to: {}. Skipping".format(ip))
-    logging.info('Waiting 15 minutes before blocking to avoid early termination')
-    time.sleep(900)
 
 
-def apply_alarm_to_instance(instance_id, threshold=0.5, region='us-west-2'):
+def apply_alarm_to_instance(instance_id, threshold=0.5, region='us-west-2', backoff=30):
     """
     Applys an alarm to a given instance that terminates after a consecutive period of 1 hour at 0.5 CPU usage.
 
@@ -154,49 +153,13 @@ def apply_alarm_to_instance(instance_id, threshold=0.5, region='us-west-2'):
                                             alarm_actions=['arn:aws:automate:{}:ec2:terminate'.format(region)])
     try:
         cw.put_metric_alarm(alarm)
-    except:
+    except boto.exception.BotoServerError:
+        logging.info('Failed to apply alarm due to BotoServerError, retrying in {} seconds'.format(backoff))
+        time.sleep(backoff)
+        apply_alarm_to_instance(instance_id, backoff=backoff+10)
+    except RuntimeError:
         logging.info("ERROR: Couldn't Apply Alarm to: {}. Skipping.".format(instance_id))
         pass
-
-
-def block_on_workers(ids, region='us-west-2'):
-    """
-    Blocks until all worker nodes are at low CPU before terminating to ensure complete metric collection.
-
-    params: argparse.Namespace      Input arguments
-    ids: list                       list of instance IDs
-    region: str                     AWS region
-    """
-    t = 3
-    metric = 'AWS/EC2/CPUUtilization'
-    while True:
-        count = 0
-        aws_start = datetime.isoformat(datetime.utcfromtimestamp(time.time() - 1800)) + 'Z'
-        aws_stop = datetime.isoformat(datetime.utcfromtimestamp(time.time())) + 'Z'
-        for instance_id in ids:
-            # Look at last 15m of each instance's CPU usage
-            try:
-                logging.info('Checking instance: {}'.format(instance_id))
-                met_object = get_metric(metric, instance_id, aws_start, aws_stop)
-                averages = [float(x['Average']) for x in get_datapoints(met_object)]
-                sub = averages[-3:]
-                limit = max(sub)
-                if limit > 0.5:
-                    break
-                else:
-                    count += 1
-            except TypeError as e:
-                logging.error('Boto auth failure. Manual intervention is likely. \n{}'.format(e))
-            except RuntimeError:
-                ids.remove(instance_id)
-        # If all instances have a max CPU value of < 0.5 for 15 minutes, break loop
-        if count == len(ids):
-            logging.info('All worker nodes are idle.')
-            break
-        else:
-            logging.info('Blocking while pipeline runs... Time: {} Minutes'.format(t * 5))
-            t += 1
-            time.sleep(300)
 
 
 def main():
@@ -215,16 +178,15 @@ def main():
                         help='Full path to directory with: pipeline script, launch script, config, and master key.')
     params = parser.parse_args()
 
+    ids = get_instance_ids(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-worker')
     # Run sequence
     start = time.time()
     num_samples = create_config(params)
     uuid = fix_launch(params)
     launch_cluster(params)
-    launch_pipeline(params)
     add_boto_to_nodes(params)
-    # Block until all workers are idle
-    ids = get_instance_ids(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-worker')
-    block_on_workers(ids, start)
+    launch_pipeline(params)
+    # Blocks until all workers are idle
     stop = time.time()
     # Collect metrics from cluster
     list_of_metrics = ['AWS/EC2/CPUUtilization',
@@ -247,12 +209,14 @@ def main():
     total_cost, avg_hourly_cost = calculate_cost(params.instance_type, ids[0], avail_zone)
     with open(os.path.join(str(uuid) + '_{}'.format(str(datetime.utcnow()).split()[0]), 'run_report.txt'), 'w') as f:
         f.write('\nInstance Type: {}\nAvail Zone: {}\nTotal Cost: {}\nAverage Hourly Cost: {}'
-                '\nUUID of Run: {}\nNum Samples: {}\nNum Nodes: {}\n'.format(
-                params.instance_type, avail_zone, total_cost*params.cluster_size, avg_hourly_cost,
-                uuid, num_samples, params.cluster_size))
+                '\nUUID of Run: {}\nNum Samples: {}\nNum Nodes: {}\nCluster Name: {}\nSource Bucket: {}'
+                '\nStart: {}\n Stop: {}'.format(
+                params.instance_type, avail_zone, total_cost * int(params.cluster_size), avg_hourly_cost,
+                uuid, num_samples, params.cluster_size, params.cluster_name, params.bucket,
+                datetime.isoformat(datetime.utcfromtimestamp(start)),
+                datetime.isoformat(datetime.utcfromtimestamp(stop))))
     # You're done!
-    logging.info('\n\nScaling Test Complete.'
-                 '\nUUID of Run: {}\nNum Samples: {}\nNum Nodes: {}\n\n'.format(uuid, num_samples, params.cluster_size))
+    logging.info('\n\nScaling Test Complete.')
 
 
 if __name__ == '__main__':
