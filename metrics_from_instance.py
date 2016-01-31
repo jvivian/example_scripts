@@ -9,10 +9,11 @@ Ideas taken from:
 http://www.artur-rodrigues.com/tech/2015/08/04/fetching-real-cpu-load-from-within-an-ec2-instance.html
 """
 import csv
-from datetime import datetime
+from datetime import datetime, time
 import logging
 from operator import itemgetter
 import os
+from boto.exception import BotoServerError
 import boto.ec2
 from boto3.session import Session
 import errno
@@ -66,7 +67,7 @@ def get_start_and_stop(instance_id, region='us-west-2'):
     return start, stop
 
 
-def get_metric(metric, instance_id, start, stop, region='us-west-2'):
+def get_metric(metric, instance_id, start, stop, region='us-west-2', backoff=30):
     """
     returns metric object associated with a paricular instance ID
 
@@ -77,17 +78,26 @@ def get_metric(metric, instance_id, start, stop, region='us-west-2'):
     region: str                 AWS region
     :return: metric object
     """
+    metric_object = None
     session = Session(region_name=region)
     cw = session.client('cloudwatch')
     namespace, metric_name = metric.rsplit('/', 1)
     logging.info('Start: {}\tStop: {}'.format(start, stop))
-    return cw.get_metric_statistics(Namespace=namespace,
-                                    MetricName=metric_name,
-                                    Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
-                                    StartTime=start,
-                                    EndTime=stop,
-                                    Period=300,
-                                    Statistics=['Average'])
+    try:
+        metric_object = cw.get_metric_statistics(Namespace=namespace,
+                                                 MetricName=metric_name,
+                                                 Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
+                                                 StartTime=start,
+                                                 EndTime=stop,
+                                                 Period=300,
+                                                 Statistics=['Average'])
+    except BotoServerError:
+        logging.info('Failed to get metric due to BotoServerError, retrying in {} seconds'.format(backoff))
+        time.sleep(backoff)
+        get_metric(metric, instance_id, start, stop, backoff=backoff+10)
+    if metric_object is None:
+        raise
+    return metric_object
 
 
 def get_datapoints(metric_statistic):
@@ -97,7 +107,7 @@ def get_datapoints(metric_statistic):
     return sorted(metric_statistic['Datapoints'], key=itemgetter('Timestamp'))
 
 
-def collect_metrics(instance_ids, list_of_metrics, start, stop, region='us-west-2', uuid=str(uuid4())):
+def collect_metrics(instance_ids, list_of_metrics, start, stop, uuid=str(uuid4())):
     """
     Collect metrics from AWS instances.  AWS limits data collection to 1,440 points or 5 days if
     collected in intervals of 5 minutes.  This metric collection will "page" the results in intervals
@@ -121,7 +131,7 @@ def collect_metrics(instance_ids, list_of_metrics, start, stop, region='us-west-
                     e = s + (4 * 24 * 3600)
                     aws_start = datetime.isoformat(datetime.utcfromtimestamp(s)) + 'Z'
                     aws_stop = datetime.isoformat(datetime.utcfromtimestamp(e)) + 'Z'
-                    met_object = get_metric(metric, instance_id, aws_start, aws_stop, region)
+                    met_object = get_metric(metric, instance_id, aws_start, aws_stop)
                     averages.extend([x['Average'] for x in get_datapoints(met_object)])
                     s = e
                 if averages:
@@ -150,7 +160,7 @@ def main():
     # params = parser.parse_args()
     #
     # ids = get_instance_ids(filter_cluster=params.cluster_name, filter_name=params.instance_name)
-    ids = get_instance_ids(filter_cluster='gtex-transfer', filter_name='jtvivian_toil-worker')
+    ids = get_instance_ids(filter_cluster='scaling-target-100', filter_name='jtvivian_toil-worker')
     logging.info("IDs being collected: {}".format(ids))
     list_of_metrics = ['AWS/EC2/CPUUtilization',
                        'CGCloud/MemUsage',
@@ -160,7 +170,7 @@ def main():
                        'AWS/EC2/NetworkOut',
                        'AWS/EC2/DiskWriteOps',
                        'AWS/EC2/DiskReadOps']
-    collect_metrics(ids, list_of_metrics, start=1452822550.44147, stop=1453859352)
+    collect_metrics(ids, list_of_metrics, start=1453877195.658519, stop=1453916798.545184)
 
 
 if __name__ == '__main__':
