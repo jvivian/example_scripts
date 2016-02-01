@@ -113,9 +113,12 @@ def launch_pipeline(params):
     """
     leader_ip = get_instance_ips(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-leader')[0]
     logging.info('Launching Pipeline and blocking. Check log.txt on leader for stderr and stdout')
-    subprocess.check_call('ssh -o StrictHostKeyChecking=no mesosbox@{} '
-                          '/home/mesosbox/shared/launch.sh "&>" log.txt'.format(leader_ip),
-                          shell=True)
+    try:
+        subprocess.check_call('ssh -o StrictHostKeyChecking=no mesosbox@{} '
+                              '/home/mesosbox/shared/launch.sh "&>" log.txt'.format(leader_ip),
+                              shell=True)
+    except subprocess.CalledProcessError as e:
+        logging.info('Pipeline exited prematurely: {}'.format(e))
 
 
 def add_boto_to_nodes(params):
@@ -178,13 +181,13 @@ def main():
                         help='Full path to directory with: pipeline script, launch script, config, and master key.')
     params = parser.parse_args()
 
-    ids = get_instance_ids(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-worker')
     # Run sequence
     start = time.time()
     num_samples = create_config(params)
     uuid = fix_launch(params)
     launch_cluster(params)
     add_boto_to_nodes(params)
+    ids = get_instance_ids(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-worker')
     launch_pipeline(params)
     # Blocks until all workers are idle
     stop = time.time()
@@ -207,14 +210,21 @@ def main():
     # Generate Run Report
     avail_zone = get_avail_zone(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-worker')[0]
     total_cost, avg_hourly_cost = calculate_cost(params.instance_type, ids[0], avail_zone)
+    # Report values
+    output = ['UUID: {}'.format(uuid),
+              'Number of Samples: {}'.format(num_samples),
+              'Number of Nodes: {}'.format(params.cluster_size),
+              'Cluster Name: {}'.format(params.cluster_name),
+              'Source Bucket: {}'.format(params.bucket),
+              'Average Hourly Cost: ${}'.format(avg_hourly_cost),
+              'Cost per Instance: ${}'.format(total_cost),
+              'Availability Zone: {}'.format(avail_zone),
+              'Start Time: {}'.format(datetime.isoformat(datetime.utcfromtimestamp(start))),
+              'Stop Time: {}'.format(datetime.isoformat(datetime.utcfromtimestamp(stop))),
+              'Total Cost of Cluster: ${}'.format(float(total_cost) * int(params.cluster_size)),
+              'Cost Per Sample: ${}'.format((float(total_cost) * int(params.cluster_size) / int(num_samples)))]
     with open(os.path.join(str(uuid) + '_{}'.format(str(datetime.utcnow()).split()[0]), 'run_report.txt'), 'w') as f:
-        f.write('\nInstance Type: {}\nAvail Zone: {}\nTotal Cost: {}\nAverage Hourly Cost: {}'
-                '\nUUID of Run: {}\nNum Samples: {}\nNum Nodes: {}\nCluster Name: {}\nSource Bucket: {}'
-                '\nStart: {}\n Stop: {}'.format(
-                params.instance_type, avail_zone, total_cost * int(params.cluster_size), avg_hourly_cost,
-                uuid, num_samples, params.cluster_size, params.cluster_name, params.bucket,
-                datetime.isoformat(datetime.utcfromtimestamp(start)),
-                datetime.isoformat(datetime.utcfromtimestamp(stop))))
+        f.write('\n'.join(output))
     # You're done!
     logging.info('\n\nScaling Test Complete.')
 
