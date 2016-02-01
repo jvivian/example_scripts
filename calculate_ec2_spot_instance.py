@@ -51,22 +51,27 @@ def calculate_cost(instance_type, instance_id, avail_zone, region='us-west-2'):
     # Connect to EC2 -- requires ~/.boto
     conn = boto.ec2.connect_to_region(region)
     # Get prices for instance, AZ and time range
-    prices = conn.get_spot_price_history(instance_type=instance_type, start_time=start_time,
-                                         end_time=end_time, availability_zone=avail_zone)
-    # Output the prices
-    for price in prices:
-        total += price.price
-        n += 1
-    # Difference b/w first and last returned times
-    stop = time.mktime(datetime.datetime.strptime(end_time, "%Y-%m-%dT%H:%M:%S.000Z").timetuple())
-    start = time.mktime(datetime.datetime.strptime(start_time, "%Y-%m-%dT%H:%M:%S.000Z").timetuple())
-    time_diff = (stop - start) / 3600
-    # Output aggregate, average and max results
-    print "For one: {} in Zone: {}".format(instance_type, avail_zone)
-    print "From: {} to {}".format(start_time, end_time)
-    print "\tTotal cost = $" + str(time_diff * (total/n))
-    print "\tAvg hourly cost = $" + str(total / n)
-    return str(time_diff * (total/n)), str(total / n)
+    try:
+        prices = conn.get_spot_price_history(instance_type=instance_type, start_time=start_time,
+                                             end_time=end_time, availability_zone=avail_zone)
+        # Output the prices
+        for price in prices:
+            total += price.price
+            n += 1
+        # Difference b/w first and last returned times
+        stop = time.mktime(datetime.datetime.strptime(end_time, "%Y-%m-%dT%H:%M:%S.000Z").timetuple())
+        start = time.mktime(datetime.datetime.strptime(start_time, "%Y-%m-%dT%H:%M:%S.000Z").timetuple())
+        time_diff = (stop - start) / 3600
+        # Output aggregate, average and max results
+        print "For one: {} in Zone: {}".format(instance_type, avail_zone)
+        print "From: {} to {}".format(start_time, end_time)
+        print "\tTotal cost = $" + str(time_diff * (total/n))
+        print "\tAvg hourly cost = $" + str(total / n)
+        return str(time_diff * (total/n)), str(total / n)
+    except:
+        logging.info('Failed to fetch prices. Paging not in effect, check start / stop time.')
+        logging.info('start: {}\nstop: {}'.format(start_time, end_time))
+        return 0.0, 0.0
 
 
 def main():
@@ -83,7 +88,6 @@ def main():
     parser.add_argument('-a', '--avail_zone', default='us-west-2a',
                         help='Availability Zone found in instance description.')
     params = parser.parse_args()
-
 
     calculate_cost(params.instance_type, params.instance_id, params.avail_zone)
 

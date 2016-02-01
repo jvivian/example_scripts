@@ -115,7 +115,7 @@ def launch_pipeline(params):
     logging.info('Launching Pipeline and blocking. Check log.txt on leader for stderr and stdout')
     try:
         subprocess.check_call('ssh -o StrictHostKeyChecking=no mesosbox@{} '
-                              '/home/mesosbox/shared/launch.sh "&>" log.txt'.format(leader_ip),
+                              '/home/mesosbox/shared/launch.sh ">&" log.txt'.format(leader_ip),
                               shell=True)
     except subprocess.CalledProcessError as e:
         logging.info('Pipeline exited prematurely: {}'.format(e))
