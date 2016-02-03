@@ -11,22 +11,38 @@ Designed for doing scaling tests on the rna-seq cgl pipeline.
 
 """
 import argparse
+import csv
 import os
 import random
 import subprocess
+import threading
 import boto
-import boto.exception
+from boto.exception import BotoServerError, EC2ResponseError
 import logging
 import boto.ec2.cloudwatch
 import time
 from uuid import uuid4
+import errno
+from tqdm import tqdm
 from boto_lib import get_instance_ids, get_instance_ips, get_avail_zone
-from metrics_from_instance import collect_metrics
 from calculate_ec2_spot_instance import calculate_cost
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger().setLevel(logging.INFO)
+
+
+def mkdir_p(path):
+    """
+    It is Easier to Ask for Forgiveness than Permission
+    """
+    try:
+        os.makedirs(path)
+    except OSError as exc:
+        if exc.errno == errno.EEXIST and os.path.isdir(path):
+            pass
+        else:
+            raise
 
 
 def create_config(params):
@@ -97,9 +113,10 @@ def launch_cluster(params):
                            '--instance-type', params.instance_type,
                            '--share', params.shared_dir,
                            '--num-workers', str(params.cluster_size),
-                           '-c', params.cluster_name,
+                           '--cluster-name', params.cluster_name,
                            '--spot-bid', str(params.spot_price),
                            '--leader-on-demand',
+                           '--num-threads', str(params.cluster_size),
                            '--ssh-opts',
                            '-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no',
                            'toil'])
@@ -114,11 +131,16 @@ def launch_pipeline(params):
     leader_ip = get_instance_ips(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-leader')[0]
     logging.info('Launching Pipeline and blocking. Check log.txt on leader for stderr and stdout')
     try:
-        subprocess.check_call('ssh -o StrictHostKeyChecking=no mesosbox@{} '
-                              '/home/mesosbox/shared/launch.sh ">&" log.txt'.format(leader_ip),
+        p = subprocess.Popen('ssh -o StrictHostKeyChecking=no mesosbox@{} '
+                             '/home/mesosbox/shared/launch.sh ">&" log.txt'.format(leader_ip),
                               shell=True)
+        logging.info('Adding Boto to nodes')
+        add_boto_to_nodes(params)
+        stdout, stderr = p.communicate()
+        return True
     except subprocess.CalledProcessError as e:
         logging.info('Pipeline exited prematurely: {}'.format(e))
+        return False
 
 
 def add_boto_to_nodes(params):
@@ -139,30 +161,108 @@ def add_boto_to_nodes(params):
             logging.info("Couldn't add Boto to: {}. Skipping".format(ip))
 
 
-def apply_alarm_to_instance(instance_id, threshold=0.5, region='us-west-2', backoff=30):
+def get_metric(cw, metric, instance_id, start, stop, backoff=30):
     """
-    Applys an alarm to a given instance that terminates after a consecutive period of 1 hour at 0.5 CPU usage.
+    returns metric object associated with a paricular instance ID
 
-    instance_id: str        ID of the EC2 Instance
-    region: str             AWS region
+    metric_name: str            Name of Metric to be Collected
+    instance_id: str            Instance ID
+    start: float                ISO format of UTC time start point
+    stop: float                 ISO format of UTC time stop point
+    region: str                 AWS region
+    :return: metric object
     """
-    logging.info('Applying Cloudwatch alarm to: {}'.format(instance_id))
-    cw = boto.ec2.cloudwatch.connect_to_region(region)
-    alarm = boto.ec2.cloudwatch.MetricAlarm(name='CPUAlarm_{}'.format(instance_id),
-                                            description='Terminate instance after low CPU.', namespace='AWS/EC2',
-                                            metric='CPUUtilization', statistic='Average', comparison='<',
-                                            threshold=threshold, period=300, evaluation_periods=1,
-                                            dimensions={'InstanceId': [instance_id]},
-                                            alarm_actions=['arn:aws:automate:{}:ec2:terminate'.format(region)])
+    metric_object = None
+    # cw = boto.ec2.cloudwatch.connect_to_region(region)
+    namespace, metric_name = metric.rsplit('/', 1)
     try:
-        cw.put_metric_alarm(alarm)
-    except boto.exception.BotoServerError:
-        logging.info('Failed to apply alarm due to BotoServerError, retrying in {} seconds'.format(backoff))
-        time.sleep(backoff)
-        apply_alarm_to_instance(instance_id, backoff=backoff+10)
-    except RuntimeError:
-        logging.info("ERROR: Couldn't Apply Alarm to: {}. Skipping.".format(instance_id))
-        pass
+        metric_object = cw.get_metric_statistics(namespace=namespace,
+                                                 metric_name=metric_name,
+                                                 dimensions={'InstanceId': instance_id},
+                                                 start_time=start,
+                                                 end_time=stop,
+                                                 period=300,
+                                                 statistics=['Average'])
+    except BotoServerError:
+        if backoff <= 60:
+            logging.info('Failed to get metric due to BotoServerError, retrying in {} seconds'.format(backoff))
+            time.sleep(backoff)
+            get_metric(cw, metric, instance_id, start, stop, backoff=backoff+10)
+        else:
+            logging.info('Giving up trying to fetch metric {} for instance {}'.format(metric, instance_id))
+            raise RuntimeError
+
+    return metric_object
+
+
+def collect_realtime_metrics(params, start, uuid=str(uuid4()), threshold=0.5, region='us-west-2'):
+    """
+    Collect metrics from AWS instances in 1 hour intervals in real time.
+
+    instance_ids: list          List of instance IDs
+    list_of_metrics: list       List of metric names
+    start: float                time.time() of start point
+    stop: float                 time.time() of stop point
+    region: str                 AWS region metrics are being collected from
+    uuid: str                   UUID of metric collection
+    """
+    list_of_metrics = ['AWS/EC2/CPUUtilization',
+                       'CGCloud/MemUsage',
+                       'CGCloud/DiskUsage_mnt_ephemeral',
+                       'CGCloud/DiskUsage_root',
+                       'AWS/EC2/NetworkIn',
+                       'AWS/EC2/NetworkOut',
+                       'AWS/EC2/DiskWriteOps',
+                       'AWS/EC2/DiskReadOps']
+    # Create output directory
+    date = str(datetime.utcnow()).split()[0]
+    mkdir_p('{}_{}'.format(uuid, date))
+    # Create connections to ec2 and cloudwatch
+    conn = boto.ec2.connect_to_region(region)
+    cw = boto.ec2.cloudwatch.connect_to_region(region)
+    # Create initial variables
+    ids = get_instance_ids(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-worker')
+    aws_start = datetime.utcfromtimestamp(start)
+    aws_stop = None
+    # Begin loop
+    logging.info('Metric collection thread has started. Waiting 15 minutes before initial collection.')
+    time.sleep(900)
+    while ids:
+        metric_collection_time = time.time()
+        for instance_id in tqdm(ids):
+            kill = False
+            for metric in list_of_metrics:
+                datapoints = []
+                try:
+                    aws_stop = aws_start + timedelta(hours=1)
+                    metric_object = get_metric(cw, metric, instance_id, aws_start, aws_stop)
+                    for datum in metric_object:
+                        datapoints.append((instance_id, metric, datum['Average'], datum['Timestamp']))
+                except RuntimeError:
+                    pass
+                # Save data in local directory
+                if datapoints:
+                    with open('{}_{}/{}.csv'.format(uuid, date, os.path.basename(metric)), 'a') as f:
+                        writer = csv.writer(f)
+                        writer.writerows(datapoints)
+                # Check if instance's CPU has been idle the last 15 minutes.
+                if metric == 'AWS/EC2/CPUUtilization':
+                    averages = [x[2] for x in sorted(datapoints, key=lambda x: x[3])][-3:]
+                    # If there is at least 15 minutes of data points and max is below threshold, flag to be killed.
+                    if len(averages) == 3:
+                        if max(averages) < threshold:
+                            kill = True
+            # Kill instance if idle
+            if kill:
+                try:
+                    conn.terminate_instances(instance_ids=[id])
+                except (EC2ResponseError, BotoServerError) as e:
+                    logging.info('Error terminating instance: {}\n{}'.format(id, e))
+        # Sleep
+        aws_start = aws_stop
+        logging.info('Sleeping for one hour since metric collection started.')
+        time.sleep(3600 - (time.time() - metric_collection_time))
+        ids = get_instance_ids(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-worker')
 
 
 def main():
@@ -179,6 +279,7 @@ def main():
     parser.add_argument('-b', '--bucket', default='tcga-data-cgl-recompute', help='Bucket where data is.')
     parser.add_argument('-d', '--shared_dir', required=True,
                         help='Full path to directory with: pipeline script, launch script, config, and master key.')
+    parser.add_argument('-r', '--region', default='us-west-2', help='AWS Region')
     params = parser.parse_args()
 
     # Run sequence
@@ -186,44 +287,46 @@ def main():
     num_samples = create_config(params)
     uuid = fix_launch(params)
     launch_cluster(params)
-    add_boto_to_nodes(params)
-    ids = get_instance_ids(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-worker')
-    launch_pipeline(params)
-    # Blocks until all workers are idle
+    # Launch metric collection thread
+    t = threading.Thread(target=collect_realtime_metrics, args=(params, start, uuid))
+    t.start()
+    # Launch pipeline and block
+    script_succeeded = launch_pipeline(params)
     stop = time.time()
-    # Collect metrics from cluster
-    list_of_metrics = ['AWS/EC2/CPUUtilization',
-                       'CGCloud/MemUsage',
-                       'CGCloud/DiskUsage_mnt_ephemeral',
-                       'CGCloud/DiskUsage_root',
-                       'AWS/EC2/NetworkIn',
-                       'AWS/EC2/NetworkOut',
-                       'AWS/EC2/DiskWriteOps',
-                       'AWS/EC2/DiskReadOps']
-    collect_metrics(ids, list_of_metrics, start, stop, uuid=uuid)
-    # Apply "Insta-kill" alarm to every worker
-    map(apply_alarm_to_instance, ids)
-    # Kill leader
-    logging.info('Killing Leader')
+    # Join metric thread
+    logging.info('Pipeline exited exit status 0: {}. Blocking until all instances terminated.'.format(script_succeeded))
+    t.join()
+    logging.info('Metric thread joined, all instances terminated.')
+    # Kill leader if pipeline was successful
     leader_id = get_instance_ids(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-leader')[0]
-    apply_alarm_to_instance(leader_id, threshold=5)
+    if script_succeeded:
+        logging.info('Killing Leader')
+        try:
+            conn = boto.ec2.connect_to_region(params.region)
+            conn.terminate_instances(instance_ids=[leader_id])
+        except (EC2ResponseError, BotoServerError) as e:
+            logging.info('Error terminating instance: {}\n{}'.format(id, e))
+    else:
+        logging.error('Pipeline exited non-zero exit status. Check log.txt file on leader.')
     # Generate Run Report
+    logging.info('Calculating costs')
     avail_zone = get_avail_zone(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-worker')[0]
-    total_cost, avg_hourly_cost = calculate_cost(params.instance_type, ids[0], avail_zone)
+    total_cost, avg_hourly_cost = calculate_cost(params.instance_type, avail_zone, instance_id=leader_id)
     # Report values
+    logging.info('Writing out run report')
     output = ['UUID: {}'.format(uuid),
               'Number of Samples: {}'.format(num_samples),
               'Number of Nodes: {}'.format(params.cluster_size),
               'Cluster Name: {}'.format(params.cluster_name),
               'Source Bucket: {}'.format(params.bucket),
-              'Average Hourly Cost: ${}'.format(avg_hourly_cost),
-              'Cost per Instance: ${}'.format(total_cost),
               'Availability Zone: {}'.format(avail_zone),
               'Start Time: {}'.format(datetime.isoformat(datetime.utcfromtimestamp(start))),
               'Stop Time: {}'.format(datetime.isoformat(datetime.utcfromtimestamp(stop))),
-              'Total Cost of Cluster: ${}'.format(float(total_cost) * int(params.cluster_size)),
-              'Cost Per Sample: ${}'.format((float(total_cost) * int(params.cluster_size) / int(num_samples)))]
-    with open(os.path.join(str(uuid) + '_{}'.format(str(datetime.utcnow()).split()[0]), 'run_report.txt'), 'w') as f:
+              'Average Hourly Cost: ${}'.format(avg_hourly_cost),
+              'Maxmimum Cost per Instance: ${}'.format(total_cost),
+              'Maximum Cost (no workers killed until end): ${}'.format(float(total_cost) * int(params.cluster_size)),
+              'Maximum Cost Per Sample: ${}'.format((float(total_cost) * int(params.cluster_size) / int(num_samples)))]
+    with open('{}_{}/{}'.format(uuid, str(datetime.utcnow()).split()[0], 'run_report.txt'), 'w') as f:
         f.write('\n'.join(output))
     # You're done!
     logging.info('\n\nScaling Test Complete.')
