@@ -255,9 +255,9 @@ def collect_realtime_metrics(params, start, uuid=str(uuid4()), threshold=0.5, re
             # Kill instance if idle
             if kill:
                 try:
-                    conn.terminate_instances(instance_ids=[id])
+                    conn.terminate_instances(instance_ids=[instance_id])
                 except (EC2ResponseError, BotoServerError) as e:
-                    logging.info('Error terminating instance: {}\n{}'.format(id, e))
+                    logging.info('Error terminating instance: {}\n{}'.format(instance_id, e))
         # Sleep
         aws_start = aws_stop
         logging.info('Sleeping for one hour since metric collection started.')
@@ -305,7 +305,7 @@ def main():
             conn = boto.ec2.connect_to_region(params.region)
             conn.terminate_instances(instance_ids=[leader_id])
         except (EC2ResponseError, BotoServerError) as e:
-            logging.info('Error terminating instance: {}\n{}'.format(id, e))
+            logging.info('Error terminating instance: {}\n{}'.format(leader_id, e))
     else:
         logging.error('Pipeline exited non-zero exit status. Check log.txt file on leader.')
     # Generate Run Report
