@@ -168,7 +168,7 @@ def get_instance_ids(filter_name=None, filter_cluster=None):
     reservations = conn.get_all_reservations(filters=filters)
     for r in reservations:
         for i in r.instances:
-            if i.ip_address is not None:
+            if i.state == 'running':
                 ids.append(str(i.id))
     return ids
 
