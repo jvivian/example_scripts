@@ -23,7 +23,9 @@ import errno
 from boto_lib import get_instance_ids, get_instance_ips
 from datetime import datetime, timedelta
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
+                    datefmt='%m-%d %H:%M:%S')
 logging.getLogger().setLevel(logging.INFO)
 
 metric_endtime_margin = timedelta(hours=1)
@@ -236,7 +238,7 @@ def collect_realtime_metrics(params, date, start, uuid=str(uuid4()), threshold=0
                     except (EC2ResponseError, BotoServerError) as e:
                         logging.info('Error terminating instance: {}\n{}'.format(instance_id, e))
                 # Set start point to be last collected timestamp
-                timestamps[instance_id] = max(x.timestamp for x in datapoints)
+                timestamps[instance_id] = max(x.timestamp for x in datapoints) if datapoints else start
         except BotoServerError:
             logging.error('Giving up trying to fetch metric for this interval')
         # Sleep
@@ -272,7 +274,6 @@ def main():
     date = str(datetime.utcnow().date())
     uuid = uuid4()
     num_samples = create_config(params)
-    # uuid = fix_launch(params)
     launch_cluster(params)
     # Add Boto to Leader
     logging.info('Adding a .boto to leader to avoid credential timeouts.')
