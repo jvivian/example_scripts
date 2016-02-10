@@ -11,13 +11,12 @@ Move files in a directory to S3 with encryption
 """
 from __future__ import print_function
 import argparse
+import base64
 import hashlib
 import os
 import subprocess
 import sys
 import re
-import random
-import tempfile
 
 
 class InputParameterError(Exception):
@@ -41,15 +40,8 @@ def generate_unique_key(master_key, url):
         '32 characters: {}'.format(new_key)
     return new_key
 
-def rand_key():
-    '''
-    This module will return a random name for a keyfile
-    '''
-    key = ''.join(['.'] + random.sample(map(chr, range(48, 57) + range(65, 90) +
-                                            range(97, 122)), 16) + ['.key'])
-    return key
 
-def write_to_s3(datum, master_key, bucket, remote_dir, temp_dir):
+def write_to_s3(datum, master_key, bucket, remote_dir):
     '''
     This module will take in some datum (a file, or a folder) and write it to
     S3.  It requires a master key to encrypt the datum with, and a bucket to
@@ -59,7 +51,6 @@ def write_to_s3(datum, master_key, bucket, remote_dir, temp_dir):
     master_key - :str: Path to master key
     bucket - :str: Bucket of s3am
     remote_dir - :str: Path describing pseudo dir to store files on s3
-    temp_dir - :str: Local temp directory to store keys in, if necessary
     '''
     exit_codes = []
     s3_url_base = 'https://s3-us-west-2.amazonaws.com/'
@@ -81,19 +72,12 @@ def write_to_s3(datum, master_key, bucket, remote_dir, temp_dir):
         if remote_dir:
             url = os.path.join(url, remote_dir)
         url = os.path.join(url, file_path)
-        new_key = generate_unique_key(master_key, url)
         #  base command call
         command = ['s3am', 'upload']
-        #  If key starts with -, make a temp file and pass that instead.
-        #  Key cannot contain ' or " either since taht will corrupt the list
-        #  passed to popen
-        if new_key.startswith('-') or '\'' in new_key or '\"' in new_key:
-            with open(os.path.join(temp_dir, rand_key()), 'w') as keyfile:
-                keyfile.write(new_key)
-            command.extend(['--sse-key-file', keyfile.name])
-        #  else pass binary key
-        else:
-            command.extend(['--sse-key', new_key])
+        if master_key:
+            new_key = generate_unique_key(master_key, url)
+            #  Add base64 encoded key
+            command.extend(['--sse-key-base64', base64.b64encode(new_key)])
         #  Add URL and bucket info to the call
         command.extend(['file://' + os.path.join(folder_base_dir, file_path),
                         bucket])
@@ -118,7 +102,7 @@ def main():
     parser = argparse.ArgumentParser(description=main.__doc__, add_help=True)
     parser.add_argument('-M', '--master_key', dest='master_key', help='Path' +
                         ' to the master key used for the encryption.', type=str,
-                        required=True)
+                        required=False, default=None)
     parser.add_argument('-B', '--bucket', dest='bucket', help='S3 bucket.',
                         type=str, required=True)
     parser.add_argument('-R', '--remote_dir', dest='remote_dir',
@@ -130,15 +114,13 @@ def main():
                         type=str, nargs='+')
     params = parser.parse_args()
     #  Input handling
-    if not os.path.exists(params.master_key):
+    if params.master_key and not os.path.exists(params.master_key):
         raise InputParameterError('The master key was not found at ' +
                                   params.master_key)
     #  If the user doesn't have ~/.boto , it doesn't even make sense to go ahead
     if not os.path.exists(os.path.expanduser('~/.boto')):
         raise RuntimeError('~/.boto not found')
 
-    # setup a temp directory to store key files if necessary
-    temp_dir = tempfile.mkdtemp()
     #  Process each of the input arguments.
     for datum in params.data:
         datum = os.path.abspath(datum)
@@ -146,12 +128,7 @@ def main():
             print('ERROR:', datum, 'could not be found.', sep=' ',
                   file=sys.stderr)
             continue
-        write_to_s3(datum, params.master_key, params.bucket, params.remote_dir,
-                    temp_dir)
-    #  Clean up after yourself, it's just polite.
-    if os.listdir(temp_dir):
-        [os.remove(os.path.join(temp_dir, x)) for x in os.listdir(temp_dir)]
-    os.rmdir(temp_dir)
+        write_to_s3(datum, params.master_key, params.bucket, params.remote_dir)
     return None
 
 
