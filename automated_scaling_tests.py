@@ -53,8 +53,7 @@ def create_config(params):
         key = keys.pop()
         samples.append(key)
         total += key.size * 1.0 / (1024 ** 4)
-    log.info('{} samples selected, totaling {} TB (requested {} TB).'.format(len(samples),
-                                                                                 total, params.sample_size))
+    log.info('{} samples selected, totaling {} TB (requested {} TB).'.format(len(samples), total, params.sample_size))
     # Write out config
     with open(os.path.join(params.shared_dir, 'config.txt'), 'w') as f:
         prefix = 'https://s3-us-west-2.amazonaws.com'
@@ -186,7 +185,7 @@ def collect_realtime_metrics(params, threshold=0.5, region='us-west-2'):
     timestamps = {}
     # Begin loop
     log.info('Metric collection has started. '
-                 'Waiting {} seconds before initial collection.'.format(metric_initial_wait_period_in_seconds))
+             'Waiting {} seconds before initial collection.'.format(metric_initial_wait_period_in_seconds))
     time.sleep(metric_initial_wait_period_in_seconds)
     while True:
         ids = get_instance_ids(filter_cluster=params.cluster_name, filter_name=params.namespace + '_toil-worker')
@@ -218,7 +217,7 @@ def collect_realtime_metrics(params, threshold=0.5, region='us-west-2'):
                             if max(averages) < threshold:
                                 kill_instance = True
                                 log.info('Flagging {} to be killed. '
-                                             'Max CPU {} for last 30 minutes.'.format(instance_id, max(averages)))
+                                         'Max CPU {} for last 30 minutes.'.format(instance_id, max(averages)))
                 # Kill instance if idle
                 if kill_instance:
                     try:
