@@ -29,7 +29,7 @@ from datetime import datetime, timedelta
 
 metric_endtime_margin = timedelta(hours=1)
 metric_initial_wait_period_in_seconds = 0
-metric_collection_interval_in_seconds = 3600
+metric_collection_interval_in_seconds = 1800
 metric_start_time_margin = 1800
 
 
@@ -211,9 +211,9 @@ def collect_realtime_metrics(params, threshold=0.5, region='us-west-2'):
                             writer.writerows(datapoints)
                     # Check if instance's CPU has been idle the last 30 minutes.
                     if metric == 'AWS/EC2/CPUUtilization':
-                        averages = [x.value for x in sorted(datapoints, key=lambda x: x.timestamp)][-6:]
-                        # If there is at least 30 minutes of data points and max is below threshold, flag to be killed.
-                        if len(averages) == 6:
+                        averages = [x.value for x in sorted(datapoints, key=lambda x: x.timestamp)][-4:]
+                        # If there is at least 20 minutes of data points and max is below threshold, flag to be killed.
+                        if len(averages) == 4:
                             if max(averages) < threshold:
                                 kill_instance = True
                                 log.info('Flagging {} to be killed. '
@@ -231,7 +231,8 @@ def collect_realtime_metrics(params, threshold=0.5, region='us-west-2'):
             log.error('Giving up trying to fetch metric for this interval')
         # Sleep
         collection_time = time.time() - metric_collection_time
-        log.info('Metric collection took: {} seconds. Waiting one hour.'.format(collection_time))
+        log.info('Metric collection took: {} seconds. '
+                 'Waiting {} seconds.'.format(collection_time, metric_collection_interval_in_seconds))
         wait_time = metric_collection_interval_in_seconds - collection_time
         if wait_time < 0:
             log.warning('Collection time exceeded metric collection interval by: %i', -wait_time)
