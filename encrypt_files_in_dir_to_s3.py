@@ -87,9 +87,7 @@ def write_to_s3(datum, master_key, bucket, remote_dir):
         #  Else, add the name of the file itself
         else:
             command.append(file_path)
-        proc = subprocess.Popen(command)
-        exit_codes.append(proc)
-    exit_codes = [x.wait() for x in exit_codes]
+        subprocess.call(command)
     return None
 
 
