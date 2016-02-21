@@ -80,6 +80,7 @@ def launch_cluster(params):
                            '--spot-bid', str(params.spot_bid),
                            '--leader-on-demand',
                            '--num-threads', str(params.num_workers),
+                           '--zone', str(params.zone),
                            '--ssh-opts',
                            '-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no',
                            'toil'])
@@ -92,7 +93,7 @@ def place_boto_on_leader(params):
                            'toil-leader', params.boto_path, ':'])
 
 
-def launch_pipeline(params):
+def launch_rnaseq_pipeline(params):
     """
     Launches pipeline on toil-leader in a screen named the cluster run name
 
@@ -280,6 +281,7 @@ def main():
     parser_cluster.add_argument('-T', '--leader-type', default='m3.medium', help='Sets leader instance type.')
     parser_cluster.add_argument('-b', '--boto-path', default='/home/mesosbox/.boto', type=str,
                                 help='Path to local .boto file to be placed on leader.')
+    parser_cluster.add_argument('-z', '--zone', default='us-west-2a', help='Zone to launch cluster in')
 
     # Launch Pipeline
     parser_pipeline = subparsers.add_parser('launch-pipeline', help='Launches pipeline')
@@ -303,9 +305,9 @@ def main():
         create_config(params)
     elif params.command == 'launch-cluster':
         launch_cluster(params)
-    elif params.command == 'launch-pipeline':
-        launch_pipeline(params)
         place_boto_on_leader(params)
+    elif params.command == 'launch-pipeline':
+        launch_rnaseq_pipeline(params)
     elif params.command == 'launch-metrics':
         collect_realtime_metrics(params)
 
