@@ -99,11 +99,8 @@ def launch_rnaseq_pipeline(params):
 
     params: argparse.Namespace      Input arguments
     """
-    if not params.jobstore:
-        jobstore = '{}-{}'.format(uuid4(), str(datetime.utcnow().date()))
-    else:
-        jobstore = params.jobstore
-    restart = '--restart' if params.restart else ''
+
+    jobstore = params.jobstore if params.jobstore else '{}-{}'.format(uuid4(), str(datetime.utcnow().date()))
     log.info('Launching Pipeline and blocking. Check log.txt on leader for stderr and stdout')
     try:
         # Create screen session
@@ -124,8 +121,10 @@ def launch_rnaseq_pipeline(params):
                                 --batchSystem="mesos" \
                                 --mesosMaster mesos-master:5050 \
                                 --workDir=/var/lib/toil \
-                                --save_bam \
-                                --wiggle {2} >& log.txt\n"'.format(jobstore, params.bucket, restart)])
+                                {2} \
+                                {3} \
+                                {4} >& log.txt\n"'.format(jobstore, params.bucket, params.wiggle,
+                                                          params.save_bam, params.restart,)])
     except subprocess.CalledProcessError as e:
         log.info('Pipeline exited with non-zero status code: {}'.format(e))
 
@@ -286,11 +285,13 @@ def main():
     # Launch Pipeline
     parser_pipeline = subparsers.add_parser('launch-pipeline', help='Launches pipeline')
     parser_pipeline.add_argument('-c', '--cluster-name', required=True, help='Name of cluster.')
+    parser_pipeline.add_argument('-b', '--bucket', required=True, help='Set destination bucket.')
     parser_pipeline.add_argument('-j', '--jobstore', default=None,
                                  help='Name of jobstore. Defaults to UUID-Date if not set')
-    parser_pipeline.add_argument('--restart', default=None, action='store_true',
+    parser_pipeline.add_argument('--restart', default='',
                                  help='Attempts to restart pipeline, requires existing jobstore.')
-    parser_pipeline.add_argument('-b', '--bucket', default='tcga-output', help='Set destination bucket.')
+    parser_pipeline.add_argumen('-w', '--wiggle', default='', help='Saves BedGraph files from STAR')
+    parser_pipeline.add_argument('-s', '--save-bam', default='', help='Saves BAM from run')
 
     # Launch Metric Collection
     parser_metric = subparsers.add_parser('launch-metrics', help='Launches metric collection thread')
