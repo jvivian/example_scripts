@@ -290,7 +290,7 @@ def main():
                                  help='Name of jobstore. Defaults to UUID-Date if not set')
     parser_pipeline.add_argument('--restart', default='',
                                  help='Attempts to restart pipeline, requires existing jobstore.')
-    parser_pipeline.add_argumen('-w', '--wiggle', default='', help='Saves BedGraph files from STAR')
+    parser_pipeline.add_argument('-w', '--wiggle', default='', help='Saves BedGraph files from STAR')
     parser_pipeline.add_argument('-s', '--save-bam', default='', help='Saves BAM from run')
 
     # Launch Metric Collection
