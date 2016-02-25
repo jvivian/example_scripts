@@ -55,7 +55,7 @@ def create_config(params):
         total += key.size * 1.0 / (1024 ** 4)
     log.info('{} samples selected, totaling {} TB (requested {} TB).'.format(len(samples), total, params.sample_size))
     # Write out config
-    with open(os.path.join(params.shared_dir, 'config.txt'), 'w') as f:
+    with open(os.path.join(params.share, 'config.txt'), 'w') as f:
         prefix = 'https://s3-us-west-2.amazonaws.com'
         for key in samples:
             name = key.name.split('/')[-1]
@@ -206,7 +206,7 @@ def collect_realtime_metrics(params, threshold=0.5, region='us-west-2'):
                     # Save data in local directory
                     if datapoints:
                         datapoints = sorted(datapoints, key=lambda x: x.timestamp)
-                        with open(os.path.join(dir_path, '{}.csv'.format(os.path.basename(metric))), 'a') as f:
+                        with open(os.path.join(dir_path, '{}.tsv'.format(os.path.basename(metric))), 'a') as f:
                             writer = csv.writer(f, delimiter='\t')
                             writer.writerows(datapoints)
                     # Check if instance's CPU has been idle the last 30 minutes.
@@ -267,6 +267,7 @@ def main():
                                help='Size of the sample deisred in TB.')
     parser_config.add_argument('-b', '--bucket', default='tcga-data-cgl-recompute',
                                help='Source bucket to pull data from.')
+    parser_config.add_argument('-S', '--share', required=True, help='Directory to save config.txt')
 
     # Launch Cluster
     parser_cluster = subparsers.add_parser('launch-cluster', help='Launches AWS cluster via CGCloud')
