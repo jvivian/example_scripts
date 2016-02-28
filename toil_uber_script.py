@@ -101,6 +101,9 @@ def launch_rnaseq_pipeline(params):
     """
 
     jobstore = params.jobstore if params.jobstore else '{}-{}'.format(uuid4(), str(datetime.utcnow().date()))
+    wiggle = '--wiggle' if params.wiggle else ''
+    save_bam = '--save_bam' if params.save_bam else ''
+    restart = '--restart' if params.restart else ''
     log.info('Launching Pipeline and blocking. Check log.txt on leader for stderr and stdout')
     try:
         # Create screen session
@@ -123,8 +126,8 @@ def launch_rnaseq_pipeline(params):
                                 --workDir=/var/lib/toil \
                                 {2} \
                                 {3} \
-                                {4} >& log.txt\n"'.format(jobstore, params.bucket, params.wiggle,
-                                                          params.save_bam, params.restart,)])
+                                {4} >& log.txt\n"'.format(jobstore, params.bucket, wiggle,
+                                                          save_bam, restart)])
     except subprocess.CalledProcessError as e:
         log.info('Pipeline exited with non-zero status code: {}'.format(e))
 
@@ -289,10 +292,10 @@ def main():
     parser_pipeline.add_argument('-b', '--bucket', required=True, help='Set destination bucket.')
     parser_pipeline.add_argument('-j', '--jobstore', default=None,
                                  help='Name of jobstore. Defaults to UUID-Date if not set')
-    parser_pipeline.add_argument('--restart', default='',
+    parser_pipeline.add_argument('--restart', action='store_true',
                                  help='Attempts to restart pipeline, requires existing jobstore.')
-    parser_pipeline.add_argument('-w', '--wiggle', default='', help='Saves BedGraph files from STAR')
-    parser_pipeline.add_argument('-s', '--save-bam', default='', help='Saves BAM from run')
+    parser_pipeline.add_argument('-w', '--wiggle', action='store_true', help='Saves BedGraph files from STAR')
+    parser_pipeline.add_argument('-s', '--save-bam', action='store_true', help='Saves BAM from run')
 
     # Launch Metric Collection
     parser_metric = subparsers.add_parser('launch-metrics', help='Launches metric collection thread')
