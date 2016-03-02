@@ -1,9 +1,7 @@
 #!/usr/bin/env python2.7
 """
 Author: John Vivian
-Date: 1-9-16
-
-Designed for doing scaling tests on the rna-seq cgl pipeline.
+Date: 2-9-16
 """
 import logging
 log = logging.getLogger(__name__)
@@ -259,7 +257,13 @@ def mkdir_p(path):
 
 def main():
     """
-    Modular script for running toil pipelines
+    Author: John Vivian (jtvivian@gmail.com)
+
+    This script was used for the Toil recompute to:
+        - Launch the initial cluster
+        - Launch the CGL RNA-seq pipeline
+        - Collect metriccs
+        - Terminate idle instances
     """
     parser = argparse.ArgumentParser(description=main.__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     subparsers = parser.add_subparsers(dest='command')
