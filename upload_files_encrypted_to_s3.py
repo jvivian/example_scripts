@@ -41,7 +41,7 @@ def main():
     for fpath in files:
         command = ['s3am', 'upload', '--resume']
         if args.master_key:
-            url = os.path.join(url_base, s3_url.netloc, s3_url.path, os.path.basename(fpath))
+            url = os.path.join(url_base, s3_url.netloc, s3_url.path.lstrip('/'), os.path.basename(fpath))
             new_key = generate_unique_key(args.master_key, url)
             print 'New encryption key formed from url: {}'.format(url)
 
