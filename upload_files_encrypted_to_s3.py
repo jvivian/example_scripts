@@ -27,18 +27,19 @@ def main():
     """
     parser = argparse.ArgumentParser(description=main.__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('-d', '--directory', required=True, help='Directory for files to upload')
-    parser.add_argument('-k', '--master-key', action='store_true', default=None, help='Path to master key')
-    parser.add_argument('-s', '-s3-path', required=True, help='S3 path to upload: i.e. s3://bucket/dir')
+    parser.add_argument('-k', '--master-key', default=None, help='Path to master key')
+    parser.add_argument('-s', '--s3-path', required=True, help='S3 path to upload: i.e. s3://bucket/dir')
     args = parser.parse_args()
     # Parse and check s3 path
     s3_url = urlparse(args.s3_path)
     assert s3_url.scheme == 's3', 's3 path is in an incorrect format. s3://bucket/dir. \n{}'.format(args.s3_path)
     # S3AM base call
-    command = ['s3am', 'upload']
     exit_codes = []
     url_base = 'https://s3-us-west-2.amazonaws.com/'
-    files = [f for f in os.listdir(args.directory) if os.path.isfile(os.path.join(args.directory, f))]
+    files = [os.path.abspath(os.path.join(args.directory, f)) for f in os.listdir(args.directory)
+             if os.path.isfile(os.path.join(args.directory, f))]
     for fpath in files:
+        command = ['s3am', 'upload', '--resume']
         if args.master_key:
             url = os.path.join(url_base, s3_url.netloc, s3_url.path, os.path.basename(fpath))
             new_key = generate_unique_key(args.master_key, url)
