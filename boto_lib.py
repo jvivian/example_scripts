@@ -34,7 +34,6 @@ def dl_encrypted_file_from_s3(url, file_path):
         """
         master_key_path: str    Path to the BD2K Master Key (for S3 Encryption)
         url: str                S3 URL (e.g. https://s3-us-west-2.amazonaws.com/bucket/file.txt)
-
         Returns: str            32-byte unique key generated for that URL
         """
         with open(master_key_path, 'r') as f:
@@ -158,21 +157,17 @@ def get_instance_ids(filter_name=None, filter_cluster=None):
     filter_cluster : str    Cluster name by which to filter
     """
     import boto.ec2
-    ids = []
     filters = {}
     if filter_name:
         filters['tag:Name'] = filter_name
     if filter_cluster:
         filters['tag:cluster_name'] = filter_cluster
     conn = boto.ec2.connect_to_region("us-west-2")
-    reservations = conn.get_all_reservations(filters=filters)
-    for r in reservations:
-        for i in r.instances:
-            if i.state == 'running':
-                ids.append(str(i.id))
+    instances = conn.get_only_instances(filters=filters)
+    ids = [x.id for x in instances if x.state == 'running']
     return ids
 
-
+# FIXME: This function annoys Hannes (DRY)
 def get_avail_zone(filter_name=None, filter_cluster=None):
     import boto.ec2
     ids = []
