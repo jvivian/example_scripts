@@ -6,6 +6,7 @@ from an S3 bucket/dir
 
 1st Argument: bucket_dir (e.g. cgl-driver-projects-encrypted/wcdt/exome_fastqs)
 """
+import os
 import sys
 import boto.s3.connection
 
@@ -24,7 +25,7 @@ line = []
 with open('config.txt', 'w') as f_out:
     for key in bucket.list(bucket_dir):
         # FIXME This will change depending on context
-        id = key.name.split('/')[-1].split('T-')[0][:-1]
+        id = os.path.basename(key.name).split('.tar')[0]
         url = str(key.generate_url(expires_in=0, query_auth=False))
         if id:
             if temp_id == id:
