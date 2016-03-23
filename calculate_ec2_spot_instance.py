@@ -42,8 +42,10 @@ def get_start_and_stop(instance_id, region='us-west-2'):
     return start, stop
 
 
-def calculate_cost(instance_type, instance_id, avail_zone, region='us-west-2'):
-    start_time, end_time = get_start_and_stop(instance_id)
+def calculate_cost(instance_type, avail_zone, instance_id=None, start_time=None, end_time=None, region='us-west-2'):
+    if start_time is None or end_time is None:
+        assert instance_id, 'If start_time or end_time not supplied, an instance_id must be supplied'
+        start_time, end_time = get_start_and_stop(instance_id)
     # Some values
     logging.info('Calculating costs...')
     total, n = 0.0, 0
