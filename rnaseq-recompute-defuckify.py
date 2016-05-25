@@ -67,7 +67,7 @@ def _s3am_with_retry(num_cores, *args):
     """
     retry_count = 3
     for i in xrange(retry_count):
-        s3am_command = ['s3am', 'upload', '--force', '--part-size=50M', '--exists=overwrite',
+        s3am_command = ['s3am', 'upload', '--force', '--part-size=50M', '--exists=skip',
                         '--upload-slots={}'.format(num_cores),
                         '--download-slots={}'.format(num_cores)] + list(args)
         ret_code = subprocess.call(s3am_command)
@@ -104,7 +104,7 @@ for sample in samples:
     os.remove(file_path)
     # Remove bad files
     print '\tRemoving bad files'
-    sample_path = file_path.split('.')[0]
+    sample_path = file_path.split('.tar')[0]
     bad_files = []
     for root, d, files in os.walk(sample_path):
         bad_files.extend([os.path.join(root, x) for x in files if 'tpm' in x or 'fpkm' in x])
