@@ -25,11 +25,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def dl_encrypted_file_from_s3(url, file_path):
+def dl_encrypted_file_from_s3(url, master_key_path):
     """
     url: str            S3 AWS string
     file_path: str      path where file will be downloaded
     """
+    import os, base64, hashlib, subprocess
     def generate_unique_key(master_key_path, url):
         """
         master_key_path: str    Path to the BD2K Master Key (for S3 Encryption)
@@ -42,7 +43,8 @@ def dl_encrypted_file_from_s3(url, file_path):
         new_key = hashlib.sha256(master_key + url).digest()
         assert len(new_key) == 32, 'New key is invalid and is not 32 characters: {}'.format(new_key)
         return new_key
-    key = generate_unique_key('master.key', url)
+    key = generate_unique_key(master_key_path, url)
+    file_path = os.path.basename(url)
     encoded_key = base64.b64encode(key)
     encoded_key_md5 = base64.b64encode(hashlib.md5(key).digest())
     h1 = 'x-amz-server-side-encryption-customer-algorithm:AES256'
