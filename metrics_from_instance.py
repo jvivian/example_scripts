@@ -15,14 +15,14 @@ from operator import itemgetter
 import os
 from boto.exception import BotoServerError
 import boto.ec2
-from boto3.session import Session
+import boto.ec2.cloudwatch
 import errno
 from tqdm import tqdm
 from uuid import uuid4
 from boto_lib import get_instance_ids
 
 logging.basicConfig(level=logging.INFO)
-# logging.getLogger().setLevel(100)
+logging.getLogger().setLevel(100)
 
 
 def mkdir_p(path):
@@ -79,18 +79,18 @@ def get_metric(metric, instance_id, start, stop, region='us-west-2', backoff=30)
     :return: metric object
     """
     metric_object = None
-    session = Session(region_name=region)
-    cw = session.client('cloudwatch')
+    # session = Session(region_name=region)
+    cw = boto.ec2.cloudwatch.connect_to_region(region)
     namespace, metric_name = metric.rsplit('/', 1)
     logging.info('Start: {}\tStop: {}'.format(start, stop))
     try:
-        metric_object = cw.get_metric_statistics(Namespace=namespace,
-                                                 MetricName=metric_name,
-                                                 Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
-                                                 StartTime=start,
-                                                 EndTime=stop,
-                                                 Period=300,
-                                                 Statistics=['Average'])
+        metric_object = cw.get_metric_statistics(namespace=namespace,
+                                                 metric_name=metric_name,
+                                                 dimensions={'InstanceId': instance_id},
+                                                 start_time=start,
+                                                 end_time=stop,
+                                                 period=300,
+                                                 statistics=['Average'])
     except BotoServerError:
         logging.info('Failed to get metric due to BotoServerError, retrying in {} seconds'.format(backoff))
         time.sleep(backoff)
@@ -129,8 +129,8 @@ def collect_metrics(instance_ids, list_of_metrics, start, stop, uuid=str(uuid4()
                 s = start
                 while s < stop:
                     e = s + (4 * 24 * 3600)
-                    aws_start = datetime.isoformat(datetime.utcfromtimestamp(s)) + 'Z'
-                    aws_stop = datetime.isoformat(datetime.utcfromtimestamp(e)) + 'Z'
+                    aws_start = datetime.utcfromtimestamp(s)
+                    aws_stop = datetime.utcfromtimestamp(e)
                     met_object = get_metric(metric, instance_id, aws_start, aws_stop)
                     averages.extend([x['Average'] for x in get_datapoints(met_object)])
                     s = e
@@ -160,7 +160,7 @@ def main():
     # params = parser.parse_args()
     #
     # ids = get_instance_ids(filter_cluster=params.cluster_name, filter_name=params.instance_name)
-    ids = get_instance_ids(filter_cluster='scaling-target-100', filter_name='jtvivian_toil-worker')
+    ids = get_instance_ids(filter_cluster='scaling-gtex-400', filter_name='jtvivian_toil-worker')
     logging.info("IDs being collected: {}".format(ids))
     list_of_metrics = ['AWS/EC2/CPUUtilization',
                        'CGCloud/MemUsage',
@@ -170,7 +170,7 @@ def main():
                        'AWS/EC2/NetworkOut',
                        'AWS/EC2/DiskWriteOps',
                        'AWS/EC2/DiskReadOps']
-    collect_metrics(ids, list_of_metrics, start=1453877195.658519, stop=1453916798.545184)
+    collect_metrics(ids, list_of_metrics, start=1454355507.550286, stop=1454405909.397642)
 
 
 if __name__ == '__main__':
