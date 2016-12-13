@@ -12,16 +12,15 @@ import os
 import shutil
 from urlparse import urlparse
 from uuid import uuid4
-
 import boto
 import subprocess
 
 
-def _download_s3_url(file_path, url):
+def _download_s3_url(fpath, url):
     """
     Downloads from S3 URL via Boto
 
-    :param str file_path: Path to file
+    :param str fpath: Path to file
     :param str url: S3 URL
     """
     from boto.s3.connection import S3Connection
@@ -33,7 +32,7 @@ def _download_s3_url(file_path, url):
                              "s3://BUCKET/KEY. '%s' is not." % url)
         bucket = s3.get_bucket(parsed_url.netloc)
         key = bucket.get_key(parsed_url.path[1:])
-        key.get_contents_to_filename(file_path)
+        key.get_contents_to_filename(fpath)
     finally:
         s3.close()
 
@@ -80,13 +79,13 @@ def _s3am_with_retry(num_cores, *args):
 
 dst_bucket = 'cgl-rnaseq-recompute-fixed'
 src_bucket = 'cgl-rnaseq-recompute-non-wiggle'
-dir = 'tcga'
+dst_dir = 'gtex/'
 
 # Collect samples
 samples = []
 s3 = boto.connect_s3()
 bucket = s3.get_bucket(src_bucket)
-for key in bucket.list(dir):
+for key in bucket.list(dst_dir):
     samples.append(os.path.join('s3://', src_bucket, key.name))
 
 work_dir = str(uuid4())
@@ -94,30 +93,32 @@ os.mkdir(work_dir)
 work_dir = os.path.abspath(work_dir)
 os.chdir(work_dir)
 for sample in samples:
-    print 'Downloading: {}'.format(sample)
-    file_path = os.path.join(work_dir, os.path.basename(sample))
-    # Download sample
-    _download_s3_url(file_path, sample)
-    # Process
-    print '\tUntarring'
-    subprocess.check_call(['tar', '-xf', file_path, '-C', work_dir])
-    os.remove(file_path)
-    # Remove bad files
-    print '\tRemoving bad files'
-    sample_path = file_path.split('.tar')[0]
-    bad_files = []
-    for root, d, files in os.walk(sample_path):
-        bad_files.extend([os.path.join(root, x) for x in files if 'tpm' in x or 'fpkm' in x])
-    for bad_file in bad_files:
-        os.remove(bad_file)
-    # Retar
-    print '\tRetar'
-    subprocess.check_call(['tar', '-czf', sample_path + '.tar.gz', os.path.basename(sample_path)])
-    # Upload to s3
-    print '\tUploading'
-    s3am_upload(file_path, os.path.join('s3://', dst_bucket, dir))
-    print '\tCleaning up'
-    shutil.rmtree(sample_path)
-    os.remove(sample_path + '.tar.gz')
-print '\n{} succesfully defucked'.format(dir)
+    if sample.endswith('.tar.gz'):
+        print 'Downloading: {}'.format(sample)
+        file_path = os.path.join(work_dir, os.path.basename(sample))
+        # Download sample
+        _download_s3_url(file_path, sample)
+        # Process
+        print '\tUntarring'
+        subprocess.check_call(['tar', '-xf', file_path, '-C', work_dir])
+        os.remove(file_path)
+        sample_path = os.listdir(work_dir)[0]
+        file_path = os.path.abspath(sample_path) + '.tar.gz'
+        # Remove bad files
+        print '\tRemoving bad files'
+        bad_files = []
+        for root, d, files in os.walk(sample_path):
+            bad_files.extend([os.path.join(root, x) for x in files if 'tpm' in x or 'fpkm' in x])
+        for bad_file in bad_files:
+            os.remove(bad_file)
+        # Retar
+        print '\tRetar'
+        subprocess.check_call(['tar', '-czf', sample_path + '.tar.gz', os.path.basename(sample_path)])
+        # Upload to s3
+        print '\tUploading'
+        s3am_upload(file_path, os.path.join('s3://', dst_bucket, dst_dir))
+        print '\tCleaning up'
+        shutil.rmtree(sample_path)
+        os.remove(sample_path + '.tar.gz')
+print '\n{} succesfully defucked'.format(dst_dir)
 shutil.rmtree(work_dir)
