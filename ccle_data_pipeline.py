@@ -3,16 +3,29 @@ import os
 import tarfile
 from glob import glob
 
+import subprocess
 from toil.job import Job
-from toil_lib.jobs import map_job
+from toil_lib import partitions
 from toil_lib.programs import docker_call
 from toil_lib.urls import s3am_upload
+
+
+def start_jobs(job, ids):
+    num_partitions = 100
+    partition_size = len(ids) / num_partitions
+    if partition_size > 1:
+        for partition in partitions(ids, partition_size):
+            job.addChildJobFn(start_jobs, partition)
+    else:
+        for sample in ids:
+            job.addChildJobFn(download_bam, sample)
 
 
 def download_bam(job, gdc_id):
     work_dir = job.fileStore.getLocalTempDir()
     output_dir = os.path.join(work_dir, gdc_id)
 
+    job.fileStore.logToMaster('Downloading: ' + gdc_id)
     parameters = ['download', '-d', '/data', gdc_id]
     docker_call(tool='jvivian/gdc-client', work_dir=work_dir, parameters=parameters)
 
@@ -29,9 +42,14 @@ def process_bam_and_upload(job, bam_id, gdc_id):
     parameters = ['fastq', '-1', '/data/r1.fastq', '-2', '/data/r2.fastq', '/data/input.bam']
     docker_call(tool='quay.io/ucsc_cgl/samtools', work_dir=work_dir, parameters=parameters)
 
+    processes = []
+    for f in [os.path.join(work_dir, x) for x in ['R1.fastq', 'R2.fastq']]:
+        processes.append(subprocess.Popen(['gzip', f]))
+    [p.wait() for p in processes]
+
     out_tar = os.path.join(work_dir, gdc_id + '.tar.gz')
     with tarfile.open(out_tar, 'w:gz') as tar:
-        for name in [os.path.join(work_dir, x) for x in ['r1.fastq', 'r2.fastq']]:
+        for name in [os.path.join(work_dir, x) for x in ['R1.fastq.gz', 'R2.fastq.gz']]:
             tar.add(name, arcname=os.path.basename(name))
 
     s3am_upload(out_tar, s3_dir='s3://cgl-ccle-data/')
@@ -42,8 +60,8 @@ def parse_gdc_manifest(manifest_path):
     with open(manifest_path, 'r') as f:
         f.readline()
         for line in f:
-            if line:
-                gdc_id = line.split('\t')[0]
+            if not line.isspace():
+                gdc_id = line.strip().split('\t')[0]
                 ids.append(gdc_id)
     return ids
 
@@ -56,7 +74,7 @@ def main():
 
     ids = parse_gdc_manifest(params.manifest)
 
-    Job.Runner.startToil(Job.wrapFn(map_job, download_bam, ids), params)
+    Job.Runner.startToil(Job.wrapJobFn(start_jobs, ids), params)
 
 if __name__ == '__main__':
     main()
