@@ -18,10 +18,10 @@ def start_jobs(job, ids):
             job.addChildJobFn(start_jobs, partition)
     else:
         for sample in ids:
-            job.addChildJobFn(download_bam, sample)
+            job.addChildJobFn(download_bam, sample, disk='40G')
 
 
-def download_bam(job, gdc_id):
+def download_bam(job, gdc_id, disk='40G'):
     work_dir = job.fileStore.getLocalTempDir()
     output_dir = os.path.join(work_dir, gdc_id)
 
@@ -32,20 +32,18 @@ def download_bam(job, gdc_id):
     sample = glob(os.path.join(output_dir, '*.bam'))[0]
     bam_id = job.fileStore.writeGlobalFile(sample)
 
-    job.addChildJobFn(process_bam_and_upload, bam_id, gdc_id, disk='100G')
+    job.addChildJobFn(process_bam_and_upload, bam_id, gdc_id, disk='80G')
 
 
-def process_bam_and_upload(job, bam_id, gdc_id):
+def process_bam_and_upload(job, bam_id, gdc_id, disk='80G'):
     work_dir = job.fileStore.getLocalTempDir()
     job.fileStore.readGlobalFile(bam_id, os.path.join(work_dir, 'input.bam'))
 
-    parameters = ['fastq', '-1', '/data/r1.fastq', '-2', '/data/r2.fastq', '/data/input.bam']
+    parameters = ['fastq', '-1', '/data/R1.fastq', '-2', '/data/R2.fastq', '/data/input.bam']
     docker_call(tool='quay.io/ucsc_cgl/samtools', work_dir=work_dir, parameters=parameters)
 
-    processes = []
-    for f in [os.path.join(work_dir, x) for x in ['R1.fastq', 'R2.fastq']]:
-        processes.append(subprocess.Popen(['gzip', f]))
-    [p.wait() for p in processes]
+    subprocess.check_call(['gzip', os.path.join(work_dir, 'R1.fastq')])
+    subprocess.check_call(['gzip', os.path.join(work_dir, 'R2.fastq')])
 
     out_tar = os.path.join(work_dir, gdc_id + '.tar.gz')
     with tarfile.open(out_tar, 'w:gz') as tar:
