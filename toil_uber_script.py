@@ -210,7 +210,7 @@ def collect_realtime_metrics(params, threshold=0.5, region='us-west-2'):
                         with open(os.path.join(dir_path, '{}.tsv'.format(os.path.basename(metric))), 'a') as f:
                             writer = csv.writer(f, delimiter='\t')
                             writer.writerows(datapoints)
-                    # Check if instance's CPU has been idle the last 30 minutes.
+                    # Check if instance's CPU has been idle the last 20 minutes.
                     if metric == 'AWS/EC2/CPUUtilization':
                         averages = [x.value for x in sorted(datapoints, key=lambda x: x.timestamp)][-4:]
                         # If there is at least 20 minutes of data points and max is below threshold, flag to be killed.
