@@ -1,0 +1,57 @@
+# RNA-seq CGL Pipeline configuration file
+# This configuration file is formatted in YAML. Simply write the value (at least one space) after the colon.
+# Edit the values in this configuration file and then rerun the pipeline: "toil-rnaseq run"
+# Just Kallisto or STAR/RSEM can be run by supplying only the inputs to those tools
+#
+# URLs can take the form: http://, ftp://, file://, s3://, gnos://
+# Local inputs follow the URL convention: file:///full/path/to/input
+# S3 URLs follow the convention: s3://bucket/directory/file.txt
+#
+# Comments (beginning with #) do not need to be removed. Optional parameters left blank are treated as false.
+##############################################################################################################
+# Required: URL ['http://', 'file://', 's3://', 'ftp://', 'gnos://'] to index tarball used by STAR
+star-index: file:///mnt/starIndex_hg38_no_alt.tar.gz
+
+# Required: URL ['http://', 'file://', 's3://', 'ftp://', 'gnos://'] to kallisto index file.
+kallisto-index: file:///mnt/kallisto_hg38.idx
+
+# Required: URL ['http://', 'file://', 's3://', 'ftp://', 'gnos://'] to reference tarball used by RSEM
+rsem-ref: file:///mnt/rsem_ref_hg38_no_alt.tar.gz
+
+# Required: Output location of sample. Can be full path to a directory or an s3:// URL
+# Warning: S3 buckets must exist prior to upload or it will fail.
+output-dir: s3://cgl-sra-rnaseq/
+
+# Required: URL to SRA key
+sra-key: file:///mnt/prj_8908.ngc
+
+# Optional: If true, will preprocess samples with cutadapt using adapter sequences.
+cutadapt: true
+
+# Optional: If true, will run FastQC and include QC in sample output
+fastqc: true
+
+# Optional: If true, will run BAM QC (as specified by California Kid's Cancer Comparison)
+bamqc:
+
+# Adapter sequence to trim. Defaults set for Illumina
+fwd-3pr-adapter: AGATCGGAAGAG
+
+# Adapter sequence to trim (for reverse strand). Defaults set for Illumina
+rev-3pr-adapter: AGATCGGAAGAG
+
+# Optional: Provide a full path to a 32-byte key used for SSE-C Encryption in Amazon
+ssec:
+
+# Optional: Provide a full path to a CGHub Key used to access GNOS hosted data
+gtkey:
+
+# Optional: If true, saves the wiggle file (.bg extension) output by STAR
+wiggle:
+
+# Optional: If true, saves the aligned bam (by coordinate) produced by STAR
+# You must also specify an ssec key if you want to upload to the s3-output-dir
+save-bam:
+
+# Optional: If true, uses resource requirements appropriate for continuous integration
+ci-test:
