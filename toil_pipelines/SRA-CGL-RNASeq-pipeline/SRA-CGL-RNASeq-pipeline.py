@@ -10,10 +10,10 @@ import yaml
 from bd2k.util.files import mkdir_p
 from bd2k.util.processes import which
 from toil.job import Job
-from toil_lib import UserError
+from toil_lib import UserError, partitions
 from toil_lib import require
 from toil_lib.files import move_files
-from toil_lib.jobs import map_job
+# from toil_lib.jobs import map_job
 from toil_lib.urls import s3am_upload, download_url
 from toil_rnaseq.rnaseq_cgl_pipeline import generate_file
 from toil_rnaseq.rnaseq_cgl_pipeline import preprocessing_declaration
@@ -43,7 +43,7 @@ def download_and_process_sra(job, sra_info, config):
         mkdir_p(config.output_dir)
 
     # Get key
-    download_url(job, config.sra_key, work_dir=work_dir, name='srakey.ngc')
+    download_url(url=config.sra_key, work_dir=work_dir, name='srakey.ngc')
 
     # Define parameters to fastq-dump
     parameters = ['--split-files', config.uuid] if config.paired else [config.uuid]
@@ -187,6 +187,28 @@ def parse_samples(path_to_manifest=None):
             if not x.isspace() and not x.startswith('#')]
 
 
+def map_job(job, func, inputs, *args):
+    """
+    Spawns a tree of jobs to avoid overloading the number of jobs spawned by a single parent.
+    This function is appropriate to use when batching samples greater than 1,000.
+
+    :param JobFunctionWrappingJob job: passed automatically by Toil
+    :param function func: Function to spawn dynamically, passes one sample as first argument
+    :param list inputs: Array of samples to be batched
+    :param list args: any arguments to be passed to the function
+    """
+    # num_partitions isn't exposed as an argument in order to be transparent to the user.
+    # The value for num_partitions is a tested value
+    num_partitions = 100
+    partition_size = len(inputs) / num_partitions
+    if partition_size > 1:
+        for partition in partitions(inputs, partition_size):
+            job.addChildJobFn(map_job, func, partition, *args)
+    else:
+        for sample in inputs:
+            job.addChildJobFn(func, sample, *args, cores=8, disk='500G')
+
+
 def main():
     """
     Pipeline shim for running toil-rnaseq on SRA data data
@@ -250,5 +272,5 @@ def main():
         Job.Runner.startToil(Job.wrapJobFn(map_job, download_and_process_sra, samples, config), args)
 
 
-if __name__ == '__main___':
+if __name__ == '__main__':
     main()
