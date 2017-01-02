@@ -98,6 +98,7 @@ def download_and_process_sra(job, sra_info, config):
                 raise UserError("Couldn't locate fastq in sample.\n\n" + e.message)
 
         r1_id = job.fileStore.writeGlobalFile(r1)
+        config.gz = True if r1.endswith('.gz') else False
         job.addChildJobFn(preprocessing_declaration, config, r1_id=r1_id, r2_id=r2_id)
 
 
