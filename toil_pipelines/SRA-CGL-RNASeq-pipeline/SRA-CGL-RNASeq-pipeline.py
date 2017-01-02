@@ -72,21 +72,28 @@ def download_and_process_sra(job, sra_info, config):
 
     # If sample is succesfully downloaded
     else:
+        # Check that run was succesful
         require(p.returncode == 0, 'Run failed\n\nout: {}\n\nerr: {}'.format(out, err))
-        r1_id, r2_id = None, None
+
+        # Create subdir by project_id
+        config.output_dir = os.path.join(config.output_dir, 'experiments', project_id)
+        if urlparse(config.output_dir).scheme == '':
+            mkdir_p(config.output_dir)
 
         # If sample is paired-end
+        r1_id, r2_id = None, None
         if config.paired:
             try:
-                r1 = [os.path.basename(x) for x in glob(os.path.join(work_dir, '*_1.*'))][0]
-                r2 = [os.path.basename(x) for x in glob(os.path.join(work_dir, '*_2.*'))][0]
+                r1 = [x for x in glob(os.path.join(work_dir, '*_1.*'))][0]
+                r2 = [x for x in glob(os.path.join(work_dir, '*_2.*'))][0]
                 r2_id = job.fileStore.writeGlobalFile(r2)
             except IndexError as e:
                 raise UserError("Couldn't locate paired fastqs (_1. and _2.) in sample.\n\n" + e.message)
+
         # If sample is single-end
         else:
             try:
-                r1 = [os.path.basename(x) for x in glob(os.path.join(work_dir, '*.f*'))][0]
+                r1 = [x for x in glob(os.path.join(work_dir, '*.f*'))][0]
             except IndexError as e:
                 raise UserError("Couldn't locate fastq in sample.\n\n" + e.message)
 
