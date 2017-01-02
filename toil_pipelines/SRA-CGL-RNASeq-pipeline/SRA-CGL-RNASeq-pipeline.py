@@ -58,8 +58,9 @@ def download_and_process_sra(job, sra_info, config):
 
     # If sample could not be downloaded, record failed SRA
     if 'cannot be opened as database or table' in err:
+        job.fileStore.logToMaster('Sample "{}" failed to be download from SRA.'.format(config.uuid))
         fail_path = os.path.join(work_dir, config.uuid + '.fail')
-        output_dir = os.path.join(config.output_dir, 'fail')
+        output_dir = os.path.join(config.output_dir, 'failed-samples')
         with open(fail_path, 'w') as f:
             f.write(err + '\n' + str(sra_info) + '\n')
         if urlparse(output_dir).scheme == 's3':
