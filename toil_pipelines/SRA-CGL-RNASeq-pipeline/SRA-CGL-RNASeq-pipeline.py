@@ -1,4 +1,5 @@
 import argparse
+import multiprocessing
 import os
 import sys
 import textwrap
@@ -36,11 +37,7 @@ def download_and_process_sra(job, sra_info, config):
     config.file_type = 'fq'
     config.paired = True if read_type == 'PAIRED' else False
     config.uuid = sra_id
-
-    # Create subdir by project_id
-    config.output_dir = os.path.join(config.output_dir, 'project_id')
-    if urlparse(config.output_dir).scheme == '':
-        mkdir_p(config.output_dir)
+    config.cores = int(multiprocessing.cpu_count())
 
     # Get key
     download_url(url=config.sra_key, work_dir=work_dir, name='srakey.ngc')
