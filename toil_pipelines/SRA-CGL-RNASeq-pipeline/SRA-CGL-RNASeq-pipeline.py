@@ -44,6 +44,7 @@ def download_and_process_sra(job, sra_info, config):
 
     # Define parameters to fastq-dump
     parameters = ['--split-files', config.uuid] if config.paired else [config.uuid]
+    parameters.extend(['--gzip', '--skip-technical', '--clip'])
 
     # Define Docker call
     call = ['docker', 'run',
