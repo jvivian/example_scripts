@@ -1,23 +1,20 @@
 import argparse
 import multiprocessing
 import os
+import subprocess
 import sys
 import textwrap
-from glob import glob
-from subprocess import Popen, PIPE
 from urlparse import urlparse
 
 import yaml
 from bd2k.util.files import mkdir_p
 from bd2k.util.processes import which
 from toil.job import Job
-from toil_lib import UserError, partitions
+from toil_lib import partitions
 from toil_lib import require
-from toil_lib.files import move_files
-# from toil_lib.jobs import map_job
-from toil_lib.urls import s3am_upload, download_url
-from toil_rnaseq.rnaseq_cgl_pipeline import generate_file
-from toil_rnaseq.rnaseq_cgl_pipeline import preprocessing_declaration
+from toil_lib.tools.preprocessing import run_cutadapt
+from toil_lib.urls import download_url
+from toil_rnaseq.rnaseq_cgl_pipeline import generate_file, pipeline_declaration
 from toil_rnaseq.rnaseq_cgl_pipeline import schemes
 
 
@@ -38,13 +35,27 @@ def download_and_process_sra(job, sra_info, config):
     config.paired = True if read_type == 'PAIRED' else False
     config.uuid = sra_id
     config.cores = int(multiprocessing.cpu_count())
+    config.gz = False
+    # Create subdir by project_id
+    config.output_dir = os.path.join(config.output_dir, 'experiments', project_id)
+    if urlparse(config.output_dir).scheme == '':
+        mkdir_p(config.output_dir)
 
-    # Get key
-    download_url(url=config.sra_key, work_dir=work_dir, name='srakey.ngc')
+    # Get SRA
+    download_url(job, url=config.sra_key, work_dir=work_dir, name='srakey.ngc')
+
+    # Download data in SRA format, then convert locally. ~250% faster than fastq-dump
+    p1 = sra_id[:3]
+    p2 = sra_id[:6]
+    p3 = sra_id[:10]
+    url = 'ftp://ftp-trace.ncbi.nih.gov/sra/sra-instant/reads/ByRun/sra/{p1}/{p2}/{p3}/{sra_id}.sra'.format(
+        p1=p1, p2=p2, p3=p3, sra_id=sra_id)
+
+    filename = os.path.join(work_dir, sra_id + '.sra')
+    subprocess.check_call(['curl', '-o', filename, url])
 
     # Define parameters to fastq-dump
-    parameters = ['--split-files', config.uuid] if config.paired else [config.uuid]
-    parameters.extend(['--gzip', '--skip-technical', '--clip'])
+    parameters = ['--split-files', '--skip-technical', '--clip', sra_id + '.sra']
 
     # Define Docker call
     call = ['docker', 'run',
@@ -54,53 +65,22 @@ def download_and_process_sra(job, sra_info, config):
             'jvivian/fastq-dump'] + parameters
 
     # Run Docker
-    p = Popen(call, stderr=PIPE, stdout=PIPE)
-    out, err = p.communicate()
+    subprocess.check_call(call)
 
-    # If sample could not be downloaded, record failed SRA
-    if 'cannot be opened as database or table' in err:
-        job.fileStore.logToMaster('Sample "{}" failed to be download from SRA.'.format(config.uuid))
-        fail_path = os.path.join(work_dir, config.uuid + '.fail')
-        output_dir = os.path.join(config.output_dir, 'failed-samples')
-        with open(fail_path, 'w') as f:
-            f.write(err + '\n' + str(sra_info) + '\n')
-        if urlparse(output_dir).scheme == 's3':
-            s3am_upload(job, fpath=fail_path, s3_dir=output_dir)
-        elif urlparse(output_dir).scheme == '':
-            mkdir_p(output_dir)
-            move_files([fail_path], output_dir)
-        return None
+    # If sample is paired-end
+    r1_id, r2_id = None, None
+    if config.paired:
+        r2 = os.path.join(work_dir, sra_id + '_2.fastq')
+        r2_id = job.fileStore.writeGlobalFile(r2)
 
-    # If sample is succesfully downloaded
-    else:
-        # Check that run was succesful
-        require(p.returncode == 0, 'Run failed\n\nout: {}\n\nerr: {}'.format(out, err))
+    r1 = os.path.join(work_dir, sra_id + '_1.fastq')
+    r1_id = job.fileStore.writeGlobalFile(r1)
 
-        # Create subdir by project_id
-        config.output_dir = os.path.join(config.output_dir, 'experiments', project_id)
-        if urlparse(config.output_dir).scheme == '':
-            mkdir_p(config.output_dir)
+    # Run CutAdapt
+    cutadapt = job.addChildJobFn(run_cutadapt, r1_id=r1_id, r2_id=r2_id,
+                                 fwd_3pr_adapter=config.fwd_3pr_adapter, rev_3pr_adapter=config.rev_3pr_adapter).rv()
 
-        # If sample is paired-end
-        r1_id, r2_id = None, None
-        if config.paired:
-            try:
-                r1 = [x for x in glob(os.path.join(work_dir, '*_1.*'))][0]
-                r2 = [x for x in glob(os.path.join(work_dir, '*_2.*'))][0]
-                r2_id = job.fileStore.writeGlobalFile(r2)
-            except IndexError as e:
-                raise UserError("Couldn't locate paired fastqs (_1. and _2.) in sample.\n\n" + e.message)
-
-        # If sample is single-end
-        else:
-            try:
-                r1 = [x for x in glob(os.path.join(work_dir, '*.f*'))][0]
-            except IndexError as e:
-                raise UserError("Couldn't locate fastq in sample.\n\n" + e.message)
-
-        r1_id = job.fileStore.writeGlobalFile(r1)
-        config.gz = True if r1.endswith('.gz') else False
-        job.addChildJobFn(preprocessing_declaration, config, r1_id=r1_id, r2_id=r2_id)
+    job.addFollowOnJobFn(pipeline_declaration, config, cutadapt)
 
 
 def generate_config():
